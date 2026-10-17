@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data:"
+    />
+    <title>ExportX</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <span class="logo">X</span>
+        <div>
+          <h1>ExportX</h1>
+          <p class="subtitle">Batch deliverables for DaVinci Resolve</p>
+        </div>
+      </div>
+      <div class="conn" id="conn">
+        <span class="dot" id="conn-dot"></span>
+        <span id="conn-text">Connecting…</span>
+        <button class="ghost small" id="btn-refresh" title="Re-read project and timelines">Refresh</button>
+      </div>
+    </header>
+
+    <div class="banner hidden" id="banner"></div>
+
+    <main class="grid">
+      <section class="card" id="card-profiles">
+        <div class="card-head">
+          <h2>Deliverables</h2>
+          <div class="actions">
+            <button class="ghost small" id="btn-all">All</button>
+            <button class="ghost small" id="btn-none">None</button>
+            <button class="ghost small" id="btn-reload-profiles" title="Re-read profile JSON files">Reload</button>
+            <button class="ghost small" id="btn-profiles-folder" title="Open ~/.exportx/profiles">Folder</button>
+          </div>
+        </div>
+        <ul class="profiles" id="profiles"></ul>
+        <p class="hint">
+          Add your own in <code id="user-dir">~/.exportx/profiles/</code>. Need codec ids?
+          <button class="link" id="btn-caps">List formats &amp; codecs</button>
+        </p>
+      </section>
+
+      <section class="card" id="card-output">
+        <h2>Output</h2>
+        <label class="field">
+          <span>Folder</span>
+          <div class="row">
+            <input type="text" id="target-dir" placeholder="/Volumes/Deliverables/Job_123" spellcheck="false" />
+            <button id="btn-browse">Browse…</button>
+            <button class="ghost" id="btn-open-out" title="Open in Finder / Explorer">Open</button>
+          </div>
+        </label>
+        <label class="field">
+          <span>Filename template</span>
+          <input type="text" id="name-template" value="{timeline}_{profile}" spellcheck="false" />
+          <small class="tokens" id="tokens"></small>
+        </label>
+
+        <h2 class="mt">Timelines</h2>
+        <div class="field">
+          <label class="radio"><input type="radio" name="tl-mode" value="current" checked /> Current timeline
+            <strong id="current-tl-name">—</strong></label>
+          <label class="radio"><input type="radio" name="tl-mode" value="pick" /> Choose timelines</label>
+          <ul class="timelines hidden" id="timelines"></ul>
+        </div>
+
+        <h2 class="mt">Options</h2>
+        <label class="check"><input type="checkbox" id="opt-clear" /> Clear Resolve's render queue first</label>
+        <label class="check"><input type="checkbox" id="opt-start" checked /> Start rendering immediately</label>
+
+        <div class="preview">
+          <div class="card-head">
+            <h3>Will create</h3>
+            <span class="muted" id="preview-count"></span>
+          </div>
+          <ul id="preview"></ul>
+        </div>
+
+        <div class="cta">
+          <button class="primary big" id="btn-go">Queue &amp; Render</button>
+          <button class="big" id="btn-queue">Queue only</button>
+          <button class="danger big hidden" id="btn-stop">Stop</button>
+        </div>
+      </section>
+
+      <section class="card wide" id="card-jobs">
+        <div class="card-head">
+          <h2>Jobs</h2>
+          <div class="progress-total">
+            <div class="bar"><div class="fill" id="total-fill"></div></div>
+            <span id="total-text">Idle</span>
+          </div>
+        </div>
+        <table class="jobs">
+          <thead>
+            <tr>
+              <th>Timeline</th>
+              <th>Deliverable</th>
+              <th>File</th>
+              <th>Status</th>
+              <th class="w">Progress</th>
+            </tr>
+          </thead>
+          <tbody id="jobs"></tbody>
+        </table>
+        <p class="muted empty" id="jobs-empty">Nothing queued yet.</p>
+      </section>
+
+      <section class="card wide" id="card-log">
+        <div class="card-head">
+          <h2>Log</h2>
+          <button class="ghost small" id="btn-clear-log">Clear</button>
+        </div>
+        <pre id="log"></pre>
+      </section>
+    </main>
+
+    <script src="renderer.js"></script>
+  </body>
+</html>

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<BlackmagicDesign>
+  <Plugin>
+    <Id>com.triptychvisuals.exportx</Id>
+    <Name>ExportX</Name>
+    <Version>0.1.0</Version>
+    <Description>Batch deliverable exporter: queue and render a set of deliverables from one panel.</Description>
+    <FilePath>main.js</FilePath>
+  </Plugin>
+</BlackmagicDesign>

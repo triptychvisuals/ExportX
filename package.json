@@ -1,0 +1,23 @@
+{
+  "name": "exportx",
+  "version": "0.1.0",
+  "description": "ExportX: batch deliverable exporter plugin for DaVinci Resolve (Workflow Integration plugin + Python CLI)",
+  "main": "main.js",
+  "private": true,
+  "license": "MIT",
+  "author": "Triptych Visuals",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "test": "node --test",
+    "check": "node scripts/check-syntax.js",
+    "mock": "EXPORTX_MOCK=1 electron .",
+    "install:resolve": "bash scripts/install.sh",
+    "dev:link": "bash scripts/install.sh --link",
+    "package": "bash scripts/package.sh"
+  },
+  "devDependencies": {
+    "electron": "^33.2.0"
+  }
+}

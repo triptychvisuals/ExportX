@@ -1,0 +1,13 @@
+# Blackmagic's native binding is copied from your Resolve install at install time
+WorkflowIntegration.node
+
+node_modules/
+dist/
+*.log
+.DS_Store
+Thumbs.db
+__pycache__/
+*.pyc
+.exportx/
+.vscode/
+.idea/

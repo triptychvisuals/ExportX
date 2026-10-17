@@ -1,0 +1,124 @@
+{
+  "profiles": [
+    {
+      "id": "prores-master",
+      "name": "ProRes 422 HQ Master",
+      "description": "Full-resolution mezzanine master at the timeline's resolution and frame rate.",
+      "format": "mov",
+      "codec": "ProRes422HQ",
+      "renderMode": "single",
+      "settings": {
+        "ExportVideo": true,
+        "ExportAudio": true,
+        "AudioCodec": "lpcm",
+        "AudioBitDepth": 24,
+        "AudioSampleRate": 48000
+      },
+      "subfolder": "01_Masters",
+      "fileSuffix": "_MASTER",
+      "tags": ["master", "archive"]
+    },
+    {
+      "id": "h264-web",
+      "name": "H.264 Web (1080p)",
+      "description": "1920x1080 MP4 for client delivery, YouTube and Vimeo.",
+      "format": "mp4",
+      "codec": "H264",
+      "renderMode": "single",
+      "resolution": { "width": 1920, "height": 1080 },
+      "settings": {
+        "ExportVideo": true,
+        "ExportAudio": true,
+        "VideoQuality": "High",
+        "AudioCodec": "aac",
+        "AudioBitDepth": 16,
+        "AudioSampleRate": 48000,
+        "NetworkOptimization": true
+      },
+      "subfolder": "02_Web",
+      "fileSuffix": "_WEB",
+      "tags": ["web", "client"]
+    },
+    {
+      "id": "h265-uhd",
+      "name": "H.265 UHD (2160p)",
+      "description": "3840x2160 HEVC MP4 for high-quality web and OTT uploads.",
+      "format": "mp4",
+      "codec": "H265",
+      "renderMode": "single",
+      "resolution": { "width": 3840, "height": 2160 },
+      "settings": {
+        "ExportVideo": true,
+        "ExportAudio": true,
+        "VideoQuality": "High",
+        "AudioCodec": "aac",
+        "AudioBitDepth": 16,
+        "AudioSampleRate": 48000
+      },
+      "subfolder": "02_Web",
+      "fileSuffix": "_UHD",
+      "enabledByDefault": false,
+      "tags": ["web", "uhd"]
+    },
+    {
+      "id": "review-proxy",
+      "name": "Review Proxy (720p)",
+      "description": "Small 1280x720 H.264 for quick review links and messaging apps.",
+      "format": "mp4",
+      "codec": "H264",
+      "renderMode": "single",
+      "resolution": { "width": 1280, "height": 720 },
+      "settings": {
+        "ExportVideo": true,
+        "ExportAudio": true,
+        "VideoQuality": "Medium",
+        "AudioCodec": "aac",
+        "AudioBitDepth": 16,
+        "AudioSampleRate": 48000,
+        "NetworkOptimization": true
+      },
+      "subfolder": "03_Review",
+      "fileSuffix": "_REVIEW",
+      "tags": ["review"]
+    },
+    {
+      "id": "social-vertical",
+      "name": "Social Vertical (1080x1920)",
+      "description": "9:16 MP4 for Reels, TikTok and Shorts. Use with a vertical timeline; a 16:9 timeline will be scaled per the project's image scaling setting.",
+      "format": "mp4",
+      "codec": "H264",
+      "renderMode": "single",
+      "resolution": { "width": 1080, "height": 1920 },
+      "settings": {
+        "ExportVideo": true,
+        "ExportAudio": true,
+        "VideoQuality": "High",
+        "AudioCodec": "aac",
+        "AudioBitDepth": 16,
+        "AudioSampleRate": 48000
+      },
+      "subfolder": "04_Social",
+      "fileSuffix": "_9x16",
+      "enabledByDefault": false,
+      "tags": ["social"]
+    },
+    {
+      "id": "stems-individual-clips",
+      "name": "Individual Clips (ProRes 422)",
+      "description": "One ProRes 422 file per timeline clip, for handoff to VFX or re-edits.",
+      "format": "mov",
+      "codec": "ProRes422",
+      "renderMode": "individual",
+      "settings": {
+        "ExportVideo": true,
+        "ExportAudio": true,
+        "AudioCodec": "lpcm",
+        "AudioBitDepth": 24,
+        "UniqueFilenameStyle": 1
+      },
+      "subfolder": "05_Clips",
+      "enabledByDefault": false,
+      "tags": ["vfx", "handoff"]
+    }
+  ]
+}
