@@ -5,34 +5,27 @@
 ExportX is a DaVinci Resolve plugin that drives Resolve's own render engine. Watch the cut in the panel, hold **C** to select each social cut, press **S** on each frame you want as a still, then press one button and ExportX queues and renders everything: the final 4K and master exports, one file per cut, one frame per still, each with the right codec, resolution, name (`261018_SpotA_Final.mp4`) and subfolder.
 
 ```
-┌ X ExportX  [Export] Settings     ● SpotA_Launch › Main Edit     ↻ ┐
-│                                                                   │
-│ ① What to export                                                  │
-│   ☑ Master                               mov · ProRes422HQ        │
-│   ☑ Final 4K                             mp4 · H265 · 3840×2160   │
-│   ☑ Web 1080p                            mp4 · H264 · 1920×1080   │
-│   ☑ Social cuts  (per cut)               mp4 · H264 · 1920×1080   │
-│   ☑ Stills TIFF  (per still)             tif                      │
-│   Save to  /Volumes/Deliver/SpotA_Launch            [Choose…] ↗  │
-│   Files are named 261018_SpotA_Launch_Master.mov and so on.       │
-│                                                                   │
-│ ② Mark while it plays                                             │
-│   ┌───────────────────────────────────────────────────────────┐   │
-│   │              ▶  preview of the timeline (720p)            │   │
-│   └───────────────────────────────────────────────────────────┘   │
-│   ━━━━━▇▇▇━━━━━━━━━━━━│━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━  │
-│   ⏸ 🔈 01:00:04:13     Marks come from the preview.   01:00:04:13 │
-│   ┌───────────────────────────┐ ┌───────────────────────────┐   │
-│   │   [C]  Hold for a cut     │ │   [S]  Still              │   │
-│   └───────────────────────────┘ └───────────────────────────┘   │
-│   CUTS 2   01 01:00:04:00 → 01:00:09:11 5.5s   STILLS 1           │
-│            02 01:00:42:23 → 01:00:44:03 1.2s   01 01:00:20:20     │
-│                                                                   │
-│ ③ Export                                                          │
-│   [              Export everything · 6 files              ]       │
-│   [ Cuts only ]                            [ Stills only ]        │
-│   3 final exports · 2 cuts · 1 still → /Volumes/Deliver/…         │
-└───────────────────────────────────────────────────────────────────┘
+┌ X ExportX  [Export] Settings   ● SpotA_Launch › Main Edit                                    ↻ ┐
+│ MARK WHILE IT PLAYS        Main Edit · 24 fps │                                                  │
+│ ┌───────────────────┐ ┌───────────────────┐   │                                                  │
+│ │ [C] Hold for a cut│ │ [S] Still         │   │                                                  │
+│ └───────────────────┘ └───────────────────┘   │            preview of the timeline              │
+│ CUTS 2                    STILLS 1            │                  (720p proxy)                   │
+│ 01 01:00:04:00→01:00:09:11 5.5s  01 01:00:20:20│                                                 │
+│ 02 01:00:42:23→01:00:44:03 1.2s               │                                                  │
+│                                               │ ━━━━▇▇▇━━━━━━━│━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ │
+│ WHAT TO EXPORT                                │ ⏸ 🔈 01:00:04:13   Marks come from the preview.  │
+│ ☑ Master              mov · ProRes422HQ       │ ● preview playing · Resolve at 01:00:48:03       │
+│ ☑ Final 4K            mp4 · H265 · 3840×2160  │                                     01:00:04:13 │
+│ ☑ Web 1080p           mp4 · H264 · 1920×1080  │ ● 261018_SpotA_Launch_Master          done      │
+│ ☑ Social cuts (per cut)                       │ ● 261018_SpotA_Launch_Final           54%       │
+│ ☑ Stills TIFF (per still)                     │ ○ 261018_SpotA_Launch_Web             waiting   │
+│ Save to /Volumes/Deliver/SpotA_Launch [Choose]│ ○ 261018_SpotA_Launch_Social_01       waiting   │
+├───────────────────────────────────────────────┤ ○ 261018_SpotA_Launch_Still_01        waiting   │
+│ [        Export everything · 7 files        ] │                                                  │
+│ [ Cuts only ]            [ Stills only ]      │                                                  │
+│ 3 final exports · 2 cuts · 2 stills → …       │                                                  │
+└───────────────────────────────────────────────┴──────────────────────────────────────────────────┘
 ```
 
 ![ExportX panel](docs/screenshots/panel.png)
@@ -55,7 +48,7 @@ Yes. ExportX encodes nothing itself. It sets the Deliver page's render settings 
 
 ## What you get
 
-- **Workflow Integration plugin** for Resolve Studio 18+: a panel under *Workspace › Workflow Integrations › ExportX*. One column, three numbered steps, everything else under "More options". Design notes in [docs/DESIGN.md](docs/DESIGN.md).
+- **Workflow Integration plugin** for Resolve Studio 18+: a panel under *Workspace › Workflow Integrations › ExportX*. Landscape layout: the C and S keys over the cuts and stills lists at the top left, the export checklist under them, the Export button pinned at the bottom, and the picture on the right. Narrow windows stack. Design notes in [docs/DESIGN.md](docs/DESIGN.md).
 - **A preview of the timeline in the panel** (a 720p proxy rendered by Resolve, cached per timeline) with a scrub bar that shows your marks, plus **two capture keys**: hold C for a cut, press S for a still, both changeable. Marks map to exact timeline frames and are stored as timeline markers.
 - **Settings tab** to change formats, codecs, sizes, quality, presets, folders and labels without touching JSON.
 - **Naming convention** `YYMMDD_Project_Label` by default, e.g. `261018_SpotA_Final.mp4`, with a live example and tokens for anything else.

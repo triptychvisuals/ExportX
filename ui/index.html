@@ -28,25 +28,74 @@
     <div class="progress-line" id="progress-line"><i id="progress-fill"></i></div>
     <div class="banner hidden" id="banner" role="status"></div>
 
-    <!-- ============================================================ Export view -->
-    <main class="steps" id="view-export">
-      <section class="step" aria-labelledby="h-choose">
-        <h2 id="h-choose"><span class="n">1</span>What to export</h2>
-        <ul class="choices" id="profiles"></ul>
-        <div class="folder">
-          <label for="target-dir">Save to</label>
-          <input type="text" id="target-dir" placeholder="Choose a folder" spellcheck="false" />
-          <button class="btn" id="btn-browse">Choose…</button>
-          <button class="icon-btn" id="btn-open-out" title="Open the output folder" aria-label="Open the output folder">
-            <svg viewBox="0 0 16 16"><path d="M6.5 3.5h-3v9h9v-3M9.5 3h3.5v3.5M13 3L7.5 8.5"/></svg>
-          </button>
+    <!-- ============================================================ Export view: controls left, picture right -->
+    <main class="work" id="view-export">
+      <section class="left" aria-label="Controls">
+        <div class="left-scroll">
+          <div class="block mark-block">
+            <div class="block-head">
+              <h2 class="label">Mark while it plays</h2>
+              <span class="hint-inline" id="capture-tl">No timeline</span>
+            </div>
+            <div class="keys">
+              <button class="keybtn cut" id="key-cut" type="button" aria-label="Hold to mark a cut">
+                <kbd id="kbd-cut">C</kbd>
+                <span class="key-main">Hold for a cut</span>
+                <span class="key-sub">hold while it plays, release to finish</span>
+                <span class="key-live" id="key-cut-live"></span>
+              </button>
+              <button class="keybtn still" id="key-still" type="button" aria-label="Mark a still">
+                <kbd id="kbd-still">S</kbd>
+                <span class="key-main">Still</span>
+                <span class="key-sub">press once on the frame you want</span>
+              </button>
+            </div>
+            <div class="marks">
+              <div class="mark-col">
+                <div class="marks-head"><span class="label">Cuts</span><span class="count" id="cuts-count">0</span><button class="link" id="btn-clear-cuts">clear</button></div>
+                <ul class="mark-list" id="cuts"></ul>
+              </div>
+              <div class="mark-col">
+                <div class="marks-head"><span class="label">Stills</span><span class="count" id="stills-count">0</span><button class="link" id="btn-clear-stills">clear</button></div>
+                <ul class="mark-list" id="stills"></ul>
+              </div>
+            </div>
+            <p class="hint" id="capture-hint">Keys work while this window is focused. Marks are saved as timeline markers.</p>
+          </div>
+
+          <div class="block choose-block">
+            <div class="block-head">
+              <h2 class="label">What to export</h2>
+            </div>
+            <ul class="choices" id="profiles"></ul>
+            <div class="folder">
+              <label for="target-dir">Save to</label>
+              <input type="text" id="target-dir" placeholder="Choose a folder" spellcheck="false" />
+              <button class="btn" id="btn-browse">Choose…</button>
+              <button class="icon-btn" id="btn-open-out" title="Open the output folder" aria-label="Open the output folder">
+                <svg viewBox="0 0 16 16"><path d="M6.5 3.5h-3v9h9v-3M9.5 3h3.5v3.5M13 3L7.5 8.5"/></svg>
+              </button>
+            </div>
+            <p class="hint" id="choose-hint"></p>
+          </div>
         </div>
-        <p class="hint" id="choose-hint"></p>
+
+        <div class="export-bar">
+          <button class="btn primary big" id="btn-go">Export everything</button>
+          <button class="btn danger big hidden" id="btn-stop">Stop rendering</button>
+          <div class="row split">
+            <button class="btn" id="btn-export-cuts">Cuts only</button>
+            <button class="btn" id="btn-export-stills">Stills only</button>
+          </div>
+          <p class="hint" id="export-summary"></p>
+          <div class="progress hidden" id="progress">
+            <div class="bar"><i id="total-fill"></i></div>
+            <span id="total-text"></span>
+          </div>
+        </div>
       </section>
 
-      <section class="step" aria-labelledby="h-mark">
-        <h2 id="h-mark"><span class="n">2</span>Mark while it plays</h2>
-
+      <section class="right" aria-label="Preview">
         <div class="viewer" id="viewer">
           <video id="pv" playsinline preload="auto"></video>
           <div class="viewer-empty" id="viewer-empty">
@@ -75,54 +124,13 @@
             <svg viewBox="0 0 16 16"><path d="M3 6h2.5L9 3.5v9L5.5 10H3zM11 6a2.5 2.5 0 0 1 0 4"/></svg>
           </button>
           <span class="tc-small" id="pv-tc">--:--:--:--</span>
-          <span class="transport-hint" id="mark-source">Marks come from the preview. Space plays, arrows step a frame.</span>
+          <span class="transport-hint" id="mark-source">Marks come from the preview. Space plays, arrow keys step a frame.</span>
           <button class="link" id="btn-preview-rerender">re-render</button>
           <button class="link" id="btn-mark-source">mark from Resolve instead</button>
         </div>
-
         <div class="playhead">
-          <span class="where" id="capture-tl">No timeline</span>
           <span class="play" id="play-state"><i></i><span>stopped</span></span>
           <span class="tc" id="playhead">--:--:--:--</span>
-        </div>
-        <div class="keys">
-          <button class="keybtn cut" id="key-cut" type="button" aria-label="Hold to mark a cut">
-            <kbd id="kbd-cut">C</kbd>
-            <span class="key-main">Hold for a cut</span>
-            <span class="key-sub">press and hold while it plays, release to finish</span>
-            <span class="key-live" id="key-cut-live"></span>
-          </button>
-          <button class="keybtn still" id="key-still" type="button" aria-label="Mark a still">
-            <kbd id="kbd-still">S</kbd>
-            <span class="key-main">Still</span>
-            <span class="key-sub">press once on the frame you want</span>
-          </button>
-        </div>
-        <div class="marks">
-          <div class="mark-col">
-            <div class="marks-head"><span class="label">Cuts</span><span class="count" id="cuts-count">0</span><button class="link" id="btn-clear-cuts">clear</button></div>
-            <ul class="mark-list" id="cuts"></ul>
-          </div>
-          <div class="mark-col">
-            <div class="marks-head"><span class="label">Stills</span><span class="count" id="stills-count">0</span><button class="link" id="btn-clear-stills">clear</button></div>
-            <ul class="mark-list" id="stills"></ul>
-          </div>
-        </div>
-        <p class="hint" id="capture-hint">Keys work while this window is focused. Marks are saved as timeline markers, so you can see and delete them in Resolve too.</p>
-      </section>
-
-      <section class="step" aria-labelledby="h-export">
-        <h2 id="h-export"><span class="n">3</span>Export</h2>
-        <button class="btn primary big" id="btn-go">Export everything</button>
-        <button class="btn danger big hidden" id="btn-stop">Stop rendering</button>
-        <div class="row split">
-          <button class="btn" id="btn-export-cuts">Cuts only</button>
-          <button class="btn" id="btn-export-stills">Stills only</button>
-        </div>
-        <p class="hint" id="export-summary"></p>
-        <div class="progress hidden" id="progress">
-          <div class="bar"><i id="total-fill"></i></div>
-          <span id="total-text"></span>
         </div>
         <ul class="files" id="jobs"></ul>
       </section>

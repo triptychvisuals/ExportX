@@ -15,7 +15,7 @@ node scripts/screenshot.js               # docs/screenshots/*.png via Playwright
 
 CI (`.github/workflows/ci.yml`) runs exactly those plus a manifest XML parse. Keep them green.
 
-After any UI change run `node scripts/screenshot.js` and look at the PNGs (it caught a grid bug, a class-name collision and an off-screen click), then `node scripts/build-preview.js` so `docs/preview.html` stays current. The panel is deliberately simple: the Export tab is one column with three numbered steps; anything set once goes to the Settings tab (see `docs/DESIGN.md` §0). Keep it that way; add to Settings before adding to a step.
+After any UI change run `node scripts/screenshot.js` and look at the PNGs (it caught a grid bug, a class-name collision and an off-screen click), then `node scripts/build-preview.js` so `docs/preview.html` stays current. The panel is deliberately simple: the Export tab is two panes (controls left in reading order with the mark block on top and the Export button pinned; picture right), stacking under 900 px; anything set once goes to the Settings tab (see `docs/DESIGN.md` §0). Keep it that way; add to Settings before adding to the Export tab.
 
 ## Layout
 

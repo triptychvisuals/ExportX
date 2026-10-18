@@ -249,6 +249,7 @@
       renderNameExamples();
     }
     window.scrollTo({ top: 0 });
+    el.viewSettings.scrollTop = 0;
   }
 
   // ------------------------------------------------------------ status
@@ -910,10 +911,10 @@
     const r = state.resolvePlayhead;
     if (markingFromPreview()) {
       const st = state.preview.status;
-      el.captureTl.textContent = `${st.timeline} · ${fpsLabel(st.fps)}${r && r.ok ? ` · Resolve at ${r.tc}` : ''}`;
+      el.captureTl.textContent = `${st.timeline} · ${fpsLabel(st.fps)}`;
       const playing = !pv.paused && !pv.ended;
       el.playState.className = `play${playing ? ' on' : ''}`;
-      el.playState.lastElementChild.textContent = playing ? 'preview playing' : 'preview paused';
+      el.playState.lastElementChild.textContent = `${playing ? 'preview playing' : 'preview paused'}${r && r.ok ? ` · Resolve at ${r.tc}` : ''}`;
       updateVideoTime();
       return;
     }

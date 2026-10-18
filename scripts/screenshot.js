@@ -21,7 +21,7 @@ const mock = fs.readFileSync(path.join(REPO, 'ui', 'mock-api.js'), 'utf8');
 
 (async () => {
   const browser = await pw.chromium.launch();
-  const page = await browser.newPage({ viewport: { width: 680, height: 1180 }, deviceScaleFactor: 2 });
+  const page = await browser.newPage({ viewport: { width: 1280, height: 800 }, deviceScaleFactor: 2 });
   page.on('pageerror', (e) => console.log('PAGE ERROR', e.message));
   page.on('console', (m) => { if (m.type() === 'error') console.log('CONSOLE', m.text()); });
   const videoUrl = 'file://' + path.join(REPO, 'ui', 'mock-preview.webm');
@@ -56,11 +56,14 @@ const mock = fs.readFileSync(path.join(REPO, 'ui', 'mock-api.js'), 'utf8');
   await page.waitForTimeout(400);
   await page.evaluate(() => { const first = document.querySelector('.deliv-head'); if (first) first.click(); });
   await page.waitForTimeout(300);
-  await page.screenshot({ path: path.join(OUT, 'settings.png'), fullPage: true });
+  await page.setViewportSize({ width: 1280, height: 1500 });
+  await page.waitForTimeout(300);
+  await page.screenshot({ path: path.join(OUT, 'settings.png') });
+  await page.setViewportSize({ width: 1280, height: 800 });
   await page.click('#tab-export');
   await page.waitForTimeout(300);
 
-  await page.setViewportSize({ width: 400, height: 860 });
+  await page.setViewportSize({ width: 400, height: 900 });
   await page.waitForTimeout(300);
   await page.screenshot({ path: path.join(OUT, 'narrow.png') });
 
