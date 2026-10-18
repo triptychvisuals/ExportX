@@ -36,14 +36,15 @@ const mock = fs.readFileSync(path.join(REPO, 'ui', 'mock-api.js'), 'utf8');
   }
   await page.screenshot({ path: path.join(OUT, 'panel.png') });
 
-  await page.$eval('#pad', (node) => node.scrollIntoView({ block: 'center' }));
+  // hold the cut key (C) for a second, then press S for a still
+  await page.$eval('#key-cut', (node) => node.scrollIntoView({ block: 'center' }));
   await page.waitForTimeout(200);
-  const box = await (await page.$('#pad')).boundingBox();
-  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
-  await page.mouse.down();
+  await page.keyboard.down('c');
   await page.waitForTimeout(900);
   await page.screenshot({ path: path.join(OUT, 'holding.png') });
-  await page.mouse.up();
+  await page.keyboard.up('c');
+  await page.waitForTimeout(400);
+  await page.keyboard.press('s');
   await page.waitForTimeout(400);
 
   await page.$eval('#btn-go', (node) => node.scrollIntoView({ block: 'center' }));

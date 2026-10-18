@@ -2,7 +2,7 @@
 
 **Batch deliverables for DaVinci Resolve with a few clicks.**
 
-ExportX is a DaVinci Resolve plugin that drives Resolve's own render engine. Watch the cut in the panel, hold a button to mark the social cuts, tap it to mark stills, then press one button and ExportX queues and renders everything: the final 4K and master exports, one file per cut, one frame per still, each with the right codec, resolution, name (`261018_SpotA_Final.mp4`) and subfolder.
+ExportX is a DaVinci Resolve plugin that drives Resolve's own render engine. Watch the cut in the panel, hold **C** to select each social cut, press **S** on each frame you want as a still, then press one button and ExportX queues and renders everything: the final 4K and master exports, one file per cut, one frame per still, each with the right codec, resolution, name (`261018_SpotA_Final.mp4`) and subfolder.
 
 ```
 ┌ X ExportX  [Export] Settings     ● SpotA_Launch › Main Edit     ↻ ┐
@@ -22,10 +22,9 @@ ExportX is a DaVinci Resolve plugin that drives Resolve's own render engine. Wat
 │   └───────────────────────────────────────────────────────────┘   │
 │   ━━━━━▇▇▇━━━━━━━━━━━━│━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━  │
 │   ⏸ 🔈 01:00:04:13     Marks come from the preview.   01:00:04:13 │
-│   ┌───────────────────────────────────────────────────────────┐   │
-│   │                      Hold for a cut                       │   │
-│   │                      Tap for a still                      │   │
-│   └───────────────────────────────────────────────────────────┘   │
+│   ┌───────────────────────────┐ ┌───────────────────────────┐   │
+│   │   [C]  Hold for a cut     │ │   [S]  Still              │   │
+│   └───────────────────────────┘ └───────────────────────────┘   │
 │   CUTS 2   01 01:00:04:00 → 01:00:09:11 5.5s   STILLS 1           │
 │            02 01:00:42:23 → 01:00:44:03 1.2s   01 01:00:20:20     │
 │                                                                   │
@@ -38,17 +37,17 @@ ExportX is a DaVinci Resolve plugin that drives Resolve's own render engine. Wat
 
 ![ExportX panel](docs/screenshots/panel.png)
 
-**Try it without Resolve:** open [`docs/preview.html`](docs/preview.html) in a browser. It is the real panel bundled with a fake Resolve and a test-pattern video standing in for your timeline, so you can hold the pad, tap it, press Export and edit deliverables in Settings. Rebuild it with `node scripts/build-preview.js`. More screenshots: [holding the pad](docs/screenshots/holding.png), [exporting](docs/screenshots/exporting.png), [Settings](docs/screenshots/settings.png), [phone width](docs/screenshots/narrow.png).
+**Try it without Resolve:** open [`docs/preview.html`](docs/preview.html) in a browser. It is the real panel bundled with a fake Resolve and a test-pattern video standing in for your timeline, so you can hold C, press S, press Export and edit deliverables in Settings. Rebuild it with `node scripts/build-preview.js`. More screenshots: [holding the pad](docs/screenshots/holding.png), [exporting](docs/screenshots/exporting.png), [Settings](docs/screenshots/settings.png), [phone width](docs/screenshots/narrow.png).
 
 ## The loop
 
 1. **What to export.** Tick the final exports you owe (Master, Final 4K, Web 1080p), the per-cut deliverable for social, and the per-still format. Choose the folder once; it is remembered.
-2. **Mark while it plays.** Press **Render preview** once and a small 720p copy of the timeline plays in the panel (made by Resolve's render engine, cached per timeline). **Hold** the pad (or the M key) across a section to mark a cut; **tap** it to mark a still. Space plays and pauses, the arrow keys step a frame, and Resolve's playhead follows when you pause. Each mark becomes a Resolve timeline marker (cyan for cuts, pink for stills), so you see them on the timeline, can trim or delete them there, and they travel with the project. Without a preview, the pad marks from Resolve's own playhead while you play there.
+2. **Mark while it plays.** Press **Render preview** once and a small 720p copy of the timeline plays in the panel (made by Resolve's render engine, cached per timeline). **Hold C** across a section to select a cut (in on press, out on release); **press S** on a frame to mark a still. Both keys can be changed in Settings, and the two on-screen buttons do the same with the mouse. Space plays and pauses, the arrow keys step a frame, and Resolve's playhead follows when you pause. Each mark becomes a Resolve timeline marker (cyan for cuts, pink for stills), so you see them on the timeline, can trim or delete them there, and they travel with the project. Without a preview, the pad marks from Resolve's own playhead while you play there.
 3. **Export.** Press **Export everything**, or **Cuts only** / **Stills only**. ExportX adds one job per deliverable to Resolve's own render queue (cuts as in/out ranges, stills as single-frame image renders), starts the render and shows progress per file.
 
 ## Settings
 
-The **Settings** tab edits deliverables in place: name, the label used in file names, whether it applies to the whole timeline, each cut or each still, format and codec (the lists come straight from your Resolve), size, quality or bit rate, a Deliver preset to start from, folder, audio, and whether it is ticked by default. Add, duplicate, reset or delete deliverables there. The same tab holds the file-name pattern with a live example, extra timelines, and the log.
+The **Settings** tab edits deliverables in place: name, the label used in file names, whether it applies to the whole timeline, each cut or each still, format and codec (the lists come straight from your Resolve), size, quality or bit rate, a Deliver preset to start from, folder, audio, and whether it is ticked by default. Add, duplicate, reset or delete deliverables there. The same tab holds the file-name pattern with a live example, the capture keys, extra timelines, and the log.
 
 ## Is it Resolve's real export engine?
 
@@ -57,7 +56,7 @@ Yes. ExportX encodes nothing itself. It sets the Deliver page's render settings 
 ## What you get
 
 - **Workflow Integration plugin** for Resolve Studio 18+: a panel under *Workspace › Workflow Integrations › ExportX*. One column, three numbered steps, everything else under "More options". Design notes in [docs/DESIGN.md](docs/DESIGN.md).
-- **A preview of the timeline in the panel** (a 720p proxy rendered by Resolve, cached per timeline) with a scrub bar that shows your marks, plus **hold-to-mark capture** that maps to exact timeline frames. Marks are stored as timeline markers.
+- **A preview of the timeline in the panel** (a 720p proxy rendered by Resolve, cached per timeline) with a scrub bar that shows your marks, plus **two capture keys**: hold C for a cut, press S for a still, both changeable. Marks map to exact timeline frames and are stored as timeline markers.
 - **Settings tab** to change formats, codecs, sizes, quality, presets, folders and labels without touching JSON.
 - **Naming convention** `YYMMDD_Project_Label` by default, e.g. `261018_SpotA_Final.mp4`, with a live example and tokens for anything else.
 - **Deliverable profiles as JSON** with a `target` of `timeline`, `cuts` or `stills`: nine sensible defaults, add your own in `~/.exportx/profiles/`, override the bundled ones by id. See [docs/PROFILES.md](docs/PROFILES.md).

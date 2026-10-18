@@ -85,11 +85,19 @@
           <span class="play" id="play-state"><i></i><span>stopped</span></span>
           <span class="tc" id="playhead">--:--:--:--</span>
         </div>
-        <button class="pad" id="pad" type="button" aria-label="Hold to mark a cut, tap to mark a still">
-          <span class="pad-main">Hold for a cut</span>
-          <span class="pad-sub">Tap for a still</span>
-          <span class="pad-live" id="pad-live"></span>
-        </button>
+        <div class="keys">
+          <button class="keybtn cut" id="key-cut" type="button" aria-label="Hold to mark a cut">
+            <kbd id="kbd-cut">C</kbd>
+            <span class="key-main">Hold for a cut</span>
+            <span class="key-sub">press and hold while it plays, release to finish</span>
+            <span class="key-live" id="key-cut-live"></span>
+          </button>
+          <button class="keybtn still" id="key-still" type="button" aria-label="Mark a still">
+            <kbd id="kbd-still">S</kbd>
+            <span class="key-main">Still</span>
+            <span class="key-sub">press once on the frame you want</span>
+          </button>
+        </div>
         <div class="marks">
           <div class="mark-col">
             <div class="marks-head"><span class="label">Cuts</span><span class="count" id="cuts-count">0</span><button class="link" id="btn-clear-cuts">clear</button></div>
@@ -100,7 +108,7 @@
             <ul class="mark-list" id="stills"></ul>
           </div>
         </div>
-        <p class="hint" id="capture-hint">Hold the pad (or the M key) while it plays to mark a cut; tap for a still. Marks are saved as timeline markers.</p>
+        <p class="hint" id="capture-hint">Keys work while this window is focused. Marks are saved as timeline markers, so you can see and delete them in Resolve too.</p>
       </section>
 
       <section class="step" aria-labelledby="h-export">
@@ -148,6 +156,18 @@
           <button class="btn small" id="btn-profiles-folder">Open the JSON folder</button>
         </div>
         <p class="hint">Your changes are saved as small JSON files in <code id="user-dir"></code>. "Reset" brings a built-in deliverable back to its defaults.</p>
+      </section>
+
+      <section class="step" aria-labelledby="h-keys">
+        <h2 id="h-keys">Keys</h2>
+        <div class="keyrows">
+          <div class="keyrow"><span>Mark a cut (hold)</span><button class="keypick" id="pick-cut" type="button" data-which="cut"><kbd>C</kbd></button></div>
+          <div class="keyrow"><span>Mark a still</span><button class="keypick" id="pick-still" type="button" data-which="still"><kbd>S</kbd></button></div>
+          <div class="keyrow"><span>Play / pause the preview</span><span class="keyfixed"><kbd>Space</kbd></span></div>
+          <div class="keyrow"><span>Step one frame</span><span class="keyfixed"><kbd>←</kbd><kbd>→</kbd></span></div>
+          <div class="keyrow"><span>Export everything</span><span class="keyfixed"><kbd>⌘</kbd><kbd>↩</kbd></span></div>
+        </div>
+        <p class="hint" id="keys-hint">Click a key to change it, then press the new one. Keys work while the ExportX window is focused.</p>
       </section>
 
       <section class="step" aria-labelledby="h-advanced">

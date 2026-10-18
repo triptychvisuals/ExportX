@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * Marks are the cuts and stills the user captured with the hold/tap pad.
+ * Marks are the cuts and stills the user captured with the cut and still keys.
  * They are stored as Resolve timeline markers so they are visible on the
  * timeline, survive restarts, travel with the project, and can be removed in
  * Resolve. ExportX recognises its markers by customData.
@@ -67,13 +67,4 @@ function marksFromMarkers(markers, info) {
   return list;
 }
 
-/** A press shorter than minCutSeconds is a still at the press frame; longer is a cut. */
-function classifyPress({ absIn, absOut, fps = 24, minCutSeconds = 0.3 }) {
-  const a = Math.min(absIn, absOut);
-  const b = Math.max(absIn, absOut);
-  const frames = b - a + 1;
-  if (frames <= Math.max(1, Math.round(minCutSeconds * fps))) return { kind: 'still', absIn: a, absOut: a };
-  return { kind: 'cut', absIn: a, absOut: b };
-}
-
-module.exports = { KINDS, kindFromMarker, buildMark, marksFromMarkers, classifyPress };
+module.exports = { KINDS, kindFromMarker, buildMark, marksFromMarkers };

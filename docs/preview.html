@@ -115,7 +115,7 @@ code { font-family: var(--x-font-mono); font-size: 11.5px; color: var(--x-text-2
   transition: background var(--x-fast), border-color var(--x-fast), opacity var(--x-fast);
 }
 .btn:hover { border-color: var(--x-text-2); }
-.btn:focus-visible, .pad:focus-visible, input:focus-visible { outline: 2px solid var(--x-accent); outline-offset: 2px; }
+.btn:focus-visible, .keybtn:focus-visible, .keypick:focus-visible, input:focus-visible { outline: 2px solid var(--x-accent); outline-offset: 2px; }
 .btn.primary { background: var(--x-accent); border-color: var(--x-accent); color: #fff; font-weight: 600; }
 .btn.primary:hover { background: var(--x-accent-2); border-color: var(--x-accent-2); }
 .btn.danger { background: var(--x-bad); border-color: var(--x-bad); color: #fff; font-weight: 600; }
@@ -212,10 +212,11 @@ input[type='text']:focus { outline: none; border-color: var(--x-accent); }
 .play.on i { background: var(--x-ok); box-shadow: 0 0 0 3px rgba(52, 199, 89, 0.18); }
 .playhead .tc { margin-left: auto; font: 700 24px/1 var(--x-font-display); letter-spacing: 0.02em; font-variant-numeric: tabular-nums; }
 
-.pad {
+.keys { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.keybtn {
   position: relative;
-  width: 100%; min-height: 128px;
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px;
+  min-height: 124px; padding: 14px 12px 22px;
   border-radius: var(--x-radius);
   border: 1px solid var(--x-line-2);
   background: var(--x-surface-2);
@@ -223,18 +224,50 @@ input[type='text']:focus { outline: none; border-color: var(--x-accent); }
   font: inherit;
   cursor: pointer;
   user-select: none; -webkit-user-select: none; touch-action: none;
-  transition: background var(--x-fast), border-color var(--x-fast), transform var(--x-fast);
+  transition: background var(--x-fast), border-color var(--x-fast), transform var(--x-fast), color var(--x-fast);
 }
-.pad:hover { border-color: var(--x-text-2); }
-.pad.holding { background: var(--x-accent); border-color: var(--x-accent); transform: scale(0.99); }
-.pad.holding .pad-sub { color: rgba(255, 255, 255, 0.75); }
-.pad.flash-still { background: var(--x-still); border-color: var(--x-still); }
-.pad.flash-cut { background: var(--x-cut); border-color: var(--x-cut); color: #04262b; }
-.pad:disabled { opacity: 0.4; cursor: not-allowed; }
-.pad-main { font: 700 20px/1 var(--x-font-display); letter-spacing: -0.01em; }
-.pad-sub { color: var(--x-text-3); font-size: 12.5px; }
-.pad.holding .pad-sub, .pad.flash-cut .pad-sub, .pad.flash-still .pad-sub { color: inherit; opacity: 0.8; }
-.pad-live { position: absolute; left: 0; right: 0; bottom: 10px; min-height: 12px; text-align: center; font: 600 11.5px/1 var(--x-font-mono); letter-spacing: 0.04em; }
+.keybtn:hover { border-color: var(--x-text-2); }
+.keybtn:disabled { opacity: 0.4; cursor: not-allowed; }
+.keybtn kbd {
+  min-width: 40px; height: 40px; padding: 0 10px;
+  display: inline-grid; place-items: center;
+  border-radius: 8px;
+  border: 1px solid var(--x-line-2);
+  border-bottom-width: 3px;
+  background: var(--x-surface-3);
+  font: 700 18px/1 var(--x-font-display);
+  color: var(--x-text);
+}
+.keybtn.cut kbd { border-color: rgba(56, 198, 214, 0.55); }
+.keybtn.still kbd { border-color: rgba(224, 111, 184, 0.55); }
+.key-main { font: 700 16px/1 var(--x-font-display); letter-spacing: -0.01em; }
+.key-sub { color: var(--x-text-3); font-size: 11.5px; text-align: center; }
+.key-live { position: absolute; left: 0; right: 0; bottom: 8px; min-height: 12px; text-align: center; font: 600 11.5px/1 var(--x-font-mono); letter-spacing: 0.04em; }
+.keybtn.cut.holding { background: var(--x-cut); border-color: var(--x-cut); color: #04262b; transform: scale(0.99); }
+.keybtn.cut.holding kbd { background: rgba(255, 255, 255, 0.35); border-color: rgba(0, 0, 0, 0.25); color: #04262b; }
+.keybtn.cut.holding .key-sub { color: rgba(4, 38, 43, 0.75); }
+.keybtn.still.flash { background: var(--x-still); border-color: var(--x-still); color: #2a0a1f; }
+.keybtn.still.flash kbd { background: rgba(255, 255, 255, 0.35); border-color: rgba(0, 0, 0, 0.25); color: #2a0a1f; }
+.keybtn.still.flash .key-sub { color: rgba(42, 10, 31, 0.75); }
+.keybtn.cut.flash { background: var(--x-cut); border-color: var(--x-cut); color: #04262b; }
+
+.keyrows { display: flex; flex-direction: column; gap: 6px; }
+.keyrow { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 36px; padding: 0 2px; border-bottom: 1px solid var(--x-line); font-size: 13px; }
+.keyrow > span:first-child { color: var(--x-text-2); }
+.keypick, .keyfixed { display: inline-flex; align-items: center; gap: 6px; background: none; border: none; padding: 0; color: inherit; font: inherit; cursor: pointer; }
+.keyfixed { cursor: default; }
+.keypick kbd, .keyfixed kbd {
+  min-width: 30px; height: 30px; padding: 0 9px;
+  display: inline-grid; place-items: center;
+  border-radius: 6px;
+  border: 1px solid var(--x-line-2);
+  border-bottom-width: 3px;
+  background: var(--x-surface-2);
+  font: 600 13px/1 var(--x-font-display);
+  color: var(--x-text);
+}
+.keypick:hover kbd { border-color: var(--x-text-2); }
+.keypick.picking kbd { border-color: var(--x-accent); color: var(--x-accent-2); font-family: var(--x-font-ui); font-weight: 500; font-size: 12px; }
 
 .marks { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 14px; }
 .mark-col { min-width: 0; }
@@ -467,6 +500,8 @@ input[type='text']:focus { outline: none; border-color: var(--x-accent); }
 
 @media (max-width: 520px) {
   .marks { grid-template-columns: 1fr; }
+  .keys { grid-template-columns: 1fr; }
+  .keybtn { min-height: 96px; }
   .choice { grid-template-columns: 20px minmax(0, 1fr); }
   .choice .meta { display: none; }
   .folder { flex-wrap: wrap; }
@@ -552,11 +587,19 @@ input[type='text']:focus { outline: none; border-color: var(--x-accent); }
           <span class="play" id="play-state"><i></i><span>stopped</span></span>
           <span class="tc" id="playhead">--:--:--:--</span>
         </div>
-        <button class="pad" id="pad" type="button" aria-label="Hold to mark a cut, tap to mark a still">
-          <span class="pad-main">Hold for a cut</span>
-          <span class="pad-sub">Tap for a still</span>
-          <span class="pad-live" id="pad-live"></span>
-        </button>
+        <div class="keys">
+          <button class="keybtn cut" id="key-cut" type="button" aria-label="Hold to mark a cut">
+            <kbd id="kbd-cut">C</kbd>
+            <span class="key-main">Hold for a cut</span>
+            <span class="key-sub">press and hold while it plays, release to finish</span>
+            <span class="key-live" id="key-cut-live"></span>
+          </button>
+          <button class="keybtn still" id="key-still" type="button" aria-label="Mark a still">
+            <kbd id="kbd-still">S</kbd>
+            <span class="key-main">Still</span>
+            <span class="key-sub">press once on the frame you want</span>
+          </button>
+        </div>
         <div class="marks">
           <div class="mark-col">
             <div class="marks-head"><span class="label">Cuts</span><span class="count" id="cuts-count">0</span><button class="link" id="btn-clear-cuts">clear</button></div>
@@ -567,7 +610,7 @@ input[type='text']:focus { outline: none; border-color: var(--x-accent); }
             <ul class="mark-list" id="stills"></ul>
           </div>
         </div>
-        <p class="hint" id="capture-hint">Hold the pad (or the M key) while it plays to mark a cut; tap for a still. Marks are saved as timeline markers.</p>
+        <p class="hint" id="capture-hint">Keys work while this window is focused. Marks are saved as timeline markers, so you can see and delete them in Resolve too.</p>
       </section>
 
       <section class="step" aria-labelledby="h-export">
@@ -615,6 +658,18 @@ input[type='text']:focus { outline: none; border-color: var(--x-accent); }
           <button class="btn small" id="btn-profiles-folder">Open the JSON folder</button>
         </div>
         <p class="hint">Your changes are saved as small JSON files in <code id="user-dir"></code>. "Reset" brings a built-in deliverable back to its defaults.</p>
+      </section>
+
+      <section class="step" aria-labelledby="h-keys">
+        <h2 id="h-keys">Keys</h2>
+        <div class="keyrows">
+          <div class="keyrow"><span>Mark a cut (hold)</span><button class="keypick" id="pick-cut" type="button" data-which="cut"><kbd>C</kbd></button></div>
+          <div class="keyrow"><span>Mark a still</span><button class="keypick" id="pick-still" type="button" data-which="still"><kbd>S</kbd></button></div>
+          <div class="keyrow"><span>Play / pause the preview</span><span class="keyfixed"><kbd>Space</kbd></span></div>
+          <div class="keyrow"><span>Step one frame</span><span class="keyfixed"><kbd>←</kbd><kbd>→</kbd></span></div>
+          <div class="keyrow"><span>Export everything</span><span class="keyfixed"><kbd>⌘</kbd><kbd>↩</kbd></span></div>
+        </div>
+        <p class="hint" id="keys-hint">Click a key to change it, then press the new one. Keys work while the ExportX window is focused.</p>
       </section>
 
       <section class="step" aria-labelledby="h-advanced">
@@ -747,7 +802,7 @@ input[type='text']:focus { outline: none; border-color: var(--x-accent); }
     if (opts && opts.underscoreSpaces) out = out.replace(/\s+/g, '_').replace(/_{2,}/g, '_');
     return out;
   };
-  let settings = { targetDir: '/Volumes/Deliver/SpotA_Launch', nameTemplate: '{yymmdd}_{project}_{label}', underscoreSpaces: true, selectedProfiles: null, clearExisting: false, startRender: true };
+  let settings = { targetDir: '/Volumes/Deliver/SpotA_Launch', nameTemplate: '{yymmdd}_{project}_{label}', underscoreSpaces: true, selectedProfiles: null, clearExisting: false, startRender: true, keyCut: 'c', keyStill: 's' };
 
   function plan(req) {
     const tls = req.timelines || ['Main Edit'];
@@ -874,11 +929,11 @@ input[type='text']:focus { outline: none; border-color: var(--x-accent); }
     markEnd: async (at) => {
       if (!press) throw new Error('No press in progress');
       const end = at && Number.isFinite(Number(at.absFrame)) ? Math.round(Number(at.absFrame)) : playheadAbs;
+      const kind = at && at.kind === 'still' ? 'still' : 'cut';
       const a = Math.min(press.absIn, end);
-      const b = Math.max(press.absIn, end);
+      const b = kind === 'still' ? a : Math.max(press.absIn, end);
       press = null;
       const frames = b - a + 1;
-      const kind = frames <= 7 ? 'still' : 'cut';
       if (markers[a - START]) throw new Error(`There is already a marker at ${tc(a)}`);
       markers[a - START] = { kind, dur: kind === 'still' ? 1 : frames };
       const marks = buildMarks();
@@ -962,8 +1017,14 @@ input[type='text']:focus { outline: none; border-color: var(--x-accent); }
     captureTl: $('capture-tl'),
     playState: $('play-state'),
     playhead: $('playhead'),
-    pad: $('pad'),
-    padLive: $('pad-live'),
+    keyCut: $('key-cut'),
+    keyCutLive: $('key-cut-live'),
+    keyStill: $('key-still'),
+    kbdCut: $('kbd-cut'),
+    kbdStill: $('kbd-still'),
+    pickCut: $('pick-cut'),
+    pickStill: $('pick-still'),
+    keysHint: $('keys-hint'),
     cuts: $('cuts'),
     stills: $('stills'),
     cutsCount: $('cuts-count'),
@@ -1018,6 +1079,8 @@ input[type='text']:focus { outline: none; border-color: var(--x-accent); }
     press: null,
     pressPromise: null,
     settings: {},
+    keys: { cut: 'c', still: 's' },
+    picking: null,
     caps: null,
     capsPromise: null,
     openDelivs: new Set(),
@@ -1139,7 +1202,8 @@ input[type='text']:focus { outline: none; border-color: var(--x-accent); }
     el.btnExportStills.disabled = !(ready && stills > 0 && countIncluded('stills') > 0);
     el.btnStop.classList.toggle('hidden', !state.rendering);
     el.btnGo.classList.toggle('hidden', state.rendering);
-    el.pad.disabled = !isConnected();
+    el.keyCut.disabled = !isConnected();
+    el.keyStill.disabled = !isConnected();
     const n = state.plan.items.length;
     const verb = el.optStart.checked ? 'Export' : 'Queue';
     el.btnGo.textContent = n ? `${verb} everything · ${plural(n, 'file')}` : `${verb} everything`;
@@ -1675,7 +1739,7 @@ input[type='text']:focus { outline: none; border-color: var(--x-accent); }
     el.pvOverlay.classList.toggle('hidden', !previewReady() || playing);
     el.pvMute.classList.toggle('muted', pv.muted);
     el.markSource.textContent = markingFromPreview()
-      ? 'Marks come from the preview. Space plays, arrows step a frame.'
+      ? 'Marks come from the preview. Space plays, arrow keys step a frame.'
       : previewReady()
         ? "Marks come from Resolve's playhead."
         : '';
@@ -1692,7 +1756,7 @@ input[type='text']:focus { outline: none; border-color: var(--x-accent); }
     }
     if (markingFromPreview()) {
       el.playhead.textContent = tc;
-      if (state.press) el.padLive.textContent = `IN ${state.press.tc} · ${secondsLabel(abs - state.press.absIn + 1, videoFps())}`;
+      if (state.press) el.keyCutLive.textContent = `IN ${state.press.tc} · ${secondsLabel(abs - state.press.absIn + 1, videoFps())}`;
     }
   }
 
@@ -1841,7 +1905,7 @@ input[type='text']:focus { outline: none; border-color: var(--x-accent); }
     el.playState.className = `play${r.playing ? ' on' : ''}`;
     el.playState.lastElementChild.textContent = r.playing ? 'playing in Resolve' : 'stopped';
     el.captureTl.textContent = `${r.timeline} · ${fpsLabel(r.fps)}`;
-    if (state.press) el.padLive.textContent = `IN ${state.press.tc} · ${secondsLabel(r.absFrame - state.press.absIn + 1, r.fps)}`;
+    if (state.press) el.keyCutLive.textContent = `IN ${state.press.tc} · ${secondsLabel(r.absFrame - state.press.absIn + 1, r.fps)}`;
   }
 
   function onResolvePlayhead(data) {
@@ -1898,33 +1962,88 @@ input[type='text']:focus { outline: none; border-color: var(--x-accent); }
     el.captureHint.className = `hint${warn.length ? ' warn' : ''}`;
     el.captureHint.textContent = warn.length
       ? warn.join(' ')
-      : 'Hold the pad (or the M key) while it plays to mark a cut; tap for a still. Marks are saved as timeline markers, so you can see and delete them in Resolve too.';
+      : `Hold ${keyName(state.keys.cut)} while it plays to select a cut, press ${keyName(state.keys.still)} for a still. Keys work while this window is focused. Marks are saved as timeline markers, so you can see and delete them in Resolve too.`;
   }
 
-  function flashPad(kind) {
-    const cls = kind === 'still' ? 'flash-still' : 'flash-cut';
-    el.pad.classList.add(cls);
-    setTimeout(() => el.pad.classList.remove(cls), 220);
+  // ------------------------------------------------------------ keys: hold cut, press still
+
+  function keyName(key) {
+    const k = String(key || '');
+    if (k === ' ') return 'Space';
+    if (k.length === 1) return k.toUpperCase();
+    return k.replace(/^arrow/, '').replace(/^./, (ch) => ch.toUpperCase());
+  }
+
+  function renderKeys() {
+    el.kbdCut.textContent = keyName(state.keys.cut);
+    el.kbdStill.textContent = keyName(state.keys.still);
+    el.pickCut.querySelector('kbd').textContent = state.picking === 'cut' ? 'press a key…' : keyName(state.keys.cut);
+    el.pickStill.querySelector('kbd').textContent = state.picking === 'still' ? 'press a key…' : keyName(state.keys.still);
+    el.pickCut.classList.toggle('picking', state.picking === 'cut');
+    el.pickStill.classList.toggle('picking', state.picking === 'still');
+    el.keyCut.setAttribute('aria-label', `Hold ${keyName(state.keys.cut)} to mark a cut`);
+    el.keyStill.setAttribute('aria-label', `Press ${keyName(state.keys.still)} to mark a still`);
+  }
+
+  function normalizeKey(e) {
+    return e.key.length === 1 ? e.key.toLowerCase() : e.key.toLowerCase();
+  }
+
+  const RESERVED_KEYS = new Set([' ', 'arrowleft', 'arrowright', 'arrowup', 'arrowdown', 'escape', 'enter', 'tab', 'shift', 'control', 'alt', 'meta', 'capslock']);
+
+  function startPicking(which) {
+    state.picking = state.picking === which ? null : which;
+    renderKeys();
+  }
+
+  function finishPicking(e) {
+    const key = normalizeKey(e);
+    if (key === 'escape') {
+      state.picking = null;
+      renderKeys();
+      return;
+    }
+    if (RESERVED_KEYS.has(key) || e.metaKey || e.ctrlKey || e.altKey) {
+      el.keysHint.textContent = 'That key is reserved. Pick a letter, digit or function key.';
+      return;
+    }
+    const other = state.picking === 'cut' ? state.keys.still : state.keys.cut;
+    if (key === other) {
+      el.keysHint.textContent = 'The cut and still keys have to differ.';
+      return;
+    }
+    state.keys[state.picking] = key;
+    state.picking = null;
+    el.keysHint.textContent = 'Click a key to change it, then press the new one. Keys work while the ExportX window is focused.';
+    api.saveSettings({ keyCut: state.keys.cut, keyStill: state.keys.still }).catch(() => {});
+    renderKeys();
+    renderMarks();
+  }
+
+  function flashKey(kind) {
+    const btn = kind === 'still' ? el.keyStill : el.keyCut;
+    btn.classList.add('flash');
+    setTimeout(() => btn.classList.remove('flash'), 220);
   }
 
   function pressAt() {
-    return markingFromPreview() ? { absFrame: absFrameFromVideo(), source: 'preview' } : undefined;
+    return markingFromPreview() ? { absFrame: absFrameFromVideo(), source: 'preview' } : {};
   }
 
   async function beginPress() {
     if (state.pressing || !isConnected()) return;
     state.pressing = true;
-    el.pad.classList.add('holding');
-    el.padLive.textContent = '…';
+    el.keyCut.classList.add('holding');
+    el.keyCutLive.textContent = '…';
     state.pressPromise = api.markBegin(pressAt());
     try {
       state.press = await state.pressPromise;
-      el.padLive.textContent = `IN ${state.press.tc}`;
+      el.keyCutLive.textContent = `IN ${state.press.tc}`;
     } catch (err) {
       state.press = null;
       state.pressing = false;
-      el.pad.classList.remove('holding');
-      el.padLive.textContent = '';
+      el.keyCut.classList.remove('holding');
+      el.keyCutLive.textContent = '';
       showBanner(err.message);
     }
   }
@@ -1934,16 +2053,30 @@ input[type='text']:focus { outline: none; border-color: var(--x-accent); }
     state.pressing = false;
     if (state.pressPromise) await state.pressPromise.catch(() => {});
     const had = state.press;
-    const at = pressAt();
+    const at = { ...pressAt(), kind: 'cut' };
     state.press = null;
-    el.pad.classList.remove('holding');
-    el.padLive.textContent = '';
+    el.keyCut.classList.remove('holding');
+    el.keyCutLive.textContent = '';
     if (!had) return;
     try {
       const result = await api.markEnd(at);
       applyMarks(result);
       if (result.added) {
-        flashPad(result.added.kind);
+        flashKey('cut');
+        showBanner(null);
+      }
+    } catch (err) {
+      showBanner(err.message);
+    }
+  }
+
+  async function markStill() {
+    if (!isConnected()) return;
+    try {
+      const result = await api.markStill(pressAt());
+      applyMarks(result);
+      if (result.added) {
+        flashKey('still');
         showBanner(null);
       }
     } catch (err) {
@@ -1957,50 +2090,65 @@ input[type='text']:focus { outline: none; border-color: var(--x-accent); }
   }
 
   function wireCapture() {
-    el.pad.addEventListener('pointerdown', (e) => {
+    el.keyCut.addEventListener('pointerdown', (e) => {
       if (e.button !== 0) return;
       e.preventDefault();
       try {
-        el.pad.setPointerCapture(e.pointerId);
+        el.keyCut.setPointerCapture(e.pointerId);
       } catch (_err) {
         /* not supported */
       }
       beginPress();
     });
-    el.pad.addEventListener('pointerup', endPress);
-    el.pad.addEventListener('pointercancel', endPress);
-    el.pad.addEventListener('keydown', (e) => {
+    el.keyCut.addEventListener('pointerup', endPress);
+    el.keyCut.addEventListener('pointercancel', endPress);
+    el.keyCut.addEventListener('keydown', (e) => {
       if (e.key === ' ' || e.key === 'Enter') e.preventDefault();
     });
+    el.keyStill.addEventListener('click', markStill);
+    el.keyStill.addEventListener('keydown', (e) => {
+      if (e.key === ' ' || e.key === 'Enter') e.preventDefault();
+    });
+    el.pickCut.addEventListener('click', () => startPicking('cut'));
+    el.pickStill.addEventListener('click', () => startPicking('still'));
+
     document.addEventListener('keydown', (e) => {
-      if (isTyping(e) || state.view !== 'export') return;
-      if (e.key === ' ') {
+      if (state.picking) {
         e.preventDefault();
-        if (e.repeat) return;
-        if (previewReady()) togglePlay();
-        else beginPress();
-      } else if (e.key.toLowerCase() === 'm') {
+        if (!e.repeat) finishPicking(e);
+        return;
+      }
+      if (isTyping(e) || state.view !== 'export' || e.metaKey || e.ctrlKey || e.altKey) return;
+      const key = normalizeKey(e);
+      if (key === state.keys.cut) {
         e.preventDefault();
         if (!e.repeat) beginPress();
-      } else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+      } else if (key === state.keys.still) {
+        e.preventDefault();
+        if (!e.repeat) markStill();
+      } else if (key === ' ') {
+        e.preventDefault();
+        if (!e.repeat && previewReady()) togglePlay();
+      } else if (key === 'arrowleft' || key === 'arrowright') {
         if (previewReady()) {
           e.preventDefault();
-          stepFrame(e.key === 'ArrowLeft' ? -1 : 1);
+          stepFrame(key === 'arrowleft' ? -1 : 1);
         }
       }
     });
     document.addEventListener('keyup', (e) => {
       if (isTyping(e) || state.view !== 'export') return;
-      if (e.key === ' ' && !previewReady()) {
-        e.preventDefault();
-        endPress();
-      } else if (e.key.toLowerCase() === 'm') {
+      if (normalizeKey(e) === state.keys.cut) {
         e.preventDefault();
         endPress();
       }
     });
     window.addEventListener('blur', () => {
       if (state.pressing) endPress();
+      if (state.picking) {
+        state.picking = null;
+        renderKeys();
+      }
     });
     $('btn-clear-cuts').addEventListener('click', () => confirmClear('cut'));
     $('btn-clear-stills').addEventListener('click', () => confirmClear('still'));
@@ -2218,6 +2366,8 @@ input[type='text']:focus { outline: none; border-color: var(--x-accent); }
     el.optUnderscore.checked = settings.underscoreSpaces !== false;
     el.optClear.checked = Boolean(settings.clearExisting);
     el.optStart.checked = settings.startRender !== false;
+    state.keys = { cut: String(settings.keyCut || 'c').toLowerCase(), still: String(settings.keyStill || 's').toLowerCase() };
+    renderKeys();
     const history = await api.logHistory().catch(() => []);
     el.log.textContent = history.join('\n');
     renderMarks();

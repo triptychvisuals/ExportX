@@ -45,7 +45,7 @@ Resolve timeline markers = where cuts and stills live (customData exportx:cut / 
 | `scripts/build-preview.js` | Bundles the panel + mock into one HTML file (`docs/preview.html`) anyone can open. |
 | `src/resolve.js` | `ResolveBridge`: awaits every Resolve call, resolves format/codec ids loosely (`auto` = first), applies a profile to Deliver settings, adds/starts/polls jobs, reads timeline info and the playhead, adds/deletes marker-backed marks. No Electron imports, so it is unit-testable. |
 | `src/batch.js` | `BatchExporter` and the pure `expandItems()`: profiles × timelines × marks → items with ranges and filenames; per-item error isolation; restores the original timeline; `waitForCompletion` polling with stop detection. |
-| `src/marks.js` | Mark kinds (colour, customData), `marksFromMarkers()` (markers → ordered, numbered marks with timecodes), `classifyPress()` (tap vs hold). |
+| `src/marks.js` | Mark kinds (colour, customData) and `marksFromMarkers()` (markers → ordered, numbered marks with timecodes). |
 | `src/timecode.js` | fps parsing, timecode ↔ absolute frames including 29.97/59.94 drop-frame. |
 | `src/profiles.js` | Loads and validates profile JSON from the bundled and user folders; `loadProfilesWithOrigin` (isUser/hasBundled), `saveUserProfile`, `deleteUserProfile` for the Settings tab. |
 | `src/naming.js` | File-name convention (`{yymmdd}_{project}_{label}` by default), tokens, sanitising, `defaultLabel`. |
@@ -74,11 +74,11 @@ Three frame spaces meet here, and the conversion lives in one place (`src/marks.
 
 Resolve's scripting API cannot stream its viewer, so the panel asks Resolve to render a 1280-wide H.264 proxy of the current timeline into `~/.exportx/previews/<project>__<timeline>.mp4` (a normal render job, deleted from the queue when done, with a JSON sidecar holding start/end frame and fps). The `<video>` element plays it. While it is the marking source, `absFrame = startFrame + round(video time × fps)` (using `requestVideoFrameCallback`'s `mediaTime` when available), and that frame is sent with `mark-begin` / `mark-end` instead of reading Resolve's playhead. When the preview pauses or is scrubbed, Resolve's playhead is moved to the same frame so both stay in step. If the timeline's length or frame rate no longer matches the sidecar, the viewer shows a "re-render" notice. The user can switch the pad back to Resolve's playhead at any time.
 
-## Flow of a hold on the pad
+## Flow of a held cut key
 
-1. `pointerdown` (or M; Space when no preview is loaded) → renderer calls `markBegin`, passing the preview's current frame when the preview is the marking source. Main otherwise reads Resolve's playhead once more for precision, and remembers `{ absIn, tc, timeline }`.
-2. While held, playhead ticks keep arriving; the pad shows `IN <tc> · <elapsed>`.
-3. `pointerup` → `markEnd`. Main reads the playhead again, classifies the press (`classifyPress`: shorter than `minCutSeconds` is a still at the in frame, otherwise a cut from in to out) and calls `Timeline.AddMarker(relIn, colour, "Cut n", note, duration, customData)`.
+1. Key-down of the cut key (C by default; or pointer-down on the cut button) → renderer calls `markBegin`, passing the preview's current frame when the preview is the marking source. Main otherwise reads Resolve's playhead once more for precision, and remembers `{ absIn, tc, timeline }`.
+2. While held, playhead ticks keep arriving; the cut button shows `IN <tc> · <elapsed>`.
+3. Key-up → `markEnd`. Main reads the playhead again and calls `Timeline.AddMarker(relIn, "Cyan", "Cut n", note, duration, "exportx:cut")` for the range. The still key (S) goes straight to `markStill`, which adds a one-frame pink marker at the current frame.
 4. Main rebuilds the mark list from `GetMarkers()`, broadcasts it, and the renderer re-plans so the "Will create" tree and inspector counts update.
 
 ## Flow of "Queue & Render"

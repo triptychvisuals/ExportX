@@ -1,6 +1,6 @@
 # ExportX – notes for Claude Code sessions
 
-ExportX is a DaVinci Resolve **Workflow Integration plugin** (Electron, launched by Resolve Studio) plus a **Python script** that both batch-queue render jobs through Resolve's scripting API using shared JSON deliverable profiles. The core loop: tick deliverables → watch the preview (a 720p proxy Resolve renders, played in the panel) and **hold** the pad to mark cuts / **tap** to mark stills (stored as Resolve timeline markers) → **Export everything** (or **Cuts only** / **Stills only**). A **Settings** tab edits deliverables (format/codec lists come from Resolve) and the file-name pattern, default `{yymmdd}_{project}_{label}`.
+ExportX is a DaVinci Resolve **Workflow Integration plugin** (Electron, launched by Resolve Studio) plus a **Python script** that both batch-queue render jobs through Resolve's scripting API using shared JSON deliverable profiles. The core loop: tick deliverables → watch the preview (a 720p proxy Resolve renders, played in the panel), **hold C** to select cuts and **press S** for stills (keys changeable in Settings; stored as Resolve timeline markers) → **Export everything** (or **Cuts only** / **Stills only**). A **Settings** tab edits deliverables (format/codec lists come from Resolve) and the file-name pattern, default `{yymmdd}_{project}_{label}`.
 
 ## Commands
 
@@ -24,7 +24,7 @@ After any UI change run `node scripts/screenshot.js` and look at the PNGs (it ca
 - `ui/` vanilla HTML/CSS/JS panel with two views (`#view-export`, `#view-settings`). Design notes and tokens: `docs/DESIGN.md`. Escape anything inserted via `innerHTML` (`escapeHtml`). Fonts in `ui/fonts/` are OFL (Wix Madefor). `ui/mock-api.js` is the browser fake used by the preview and screenshots (extend it when the bridge API grows); `ui/mock-preview.webm` is a generated test pattern standing in for the preview video.
 - `src/resolve.js` `ResolveBridge`. **Every Resolve call is awaited**; do not assume sync or async. Format/codec ids are matched loosely via `matchEntry`; codec `auto` = first codec of the format. Also timeline info, playhead, seek, and marker-backed marks.
 - `src/batch.js` `BatchExporter.plan/queue/render/waitForCompletion` and the pure `expandItems()` (profiles × timelines × marks → items). Per-item errors are collected, not thrown; "nothing marked" is a note.
-- `src/marks.js` mark kinds (`exportx:cut` cyan, `exportx:still` pink), `marksFromMarkers`, `classifyPress` (tap vs hold).
+- `src/marks.js` mark kinds (`exportx:cut` cyan, `exportx:still` pink), `marksFromMarkers`.
 - `src/timecode.js` fps parsing, timecode ↔ absolute frames, drop-frame aware.
 - `src/profiles.js` (load/validate, plus `saveUserProfile`/`deleteUserProfile`/`loadProfilesWithOrigin` for Settings) and `src/naming.js` (convention `{yymmdd}_{project}_{label}`, `defaultLabel`) are pure helpers with tests.
 - `profiles/default.json` bundled deliverables with `target: timeline | cuts | stills`; user overrides live in `~/.exportx/profiles/` (see `docs/PROFILES.md`).

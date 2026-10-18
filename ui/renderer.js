@@ -40,8 +40,14 @@
     captureTl: $('capture-tl'),
     playState: $('play-state'),
     playhead: $('playhead'),
-    pad: $('pad'),
-    padLive: $('pad-live'),
+    keyCut: $('key-cut'),
+    keyCutLive: $('key-cut-live'),
+    keyStill: $('key-still'),
+    kbdCut: $('kbd-cut'),
+    kbdStill: $('kbd-still'),
+    pickCut: $('pick-cut'),
+    pickStill: $('pick-still'),
+    keysHint: $('keys-hint'),
     cuts: $('cuts'),
     stills: $('stills'),
     cutsCount: $('cuts-count'),
@@ -96,6 +102,8 @@
     press: null,
     pressPromise: null,
     settings: {},
+    keys: { cut: 'c', still: 's' },
+    picking: null,
     caps: null,
     capsPromise: null,
     openDelivs: new Set(),
@@ -217,7 +225,8 @@
     el.btnExportStills.disabled = !(ready && stills > 0 && countIncluded('stills') > 0);
     el.btnStop.classList.toggle('hidden', !state.rendering);
     el.btnGo.classList.toggle('hidden', state.rendering);
-    el.pad.disabled = !isConnected();
+    el.keyCut.disabled = !isConnected();
+    el.keyStill.disabled = !isConnected();
     const n = state.plan.items.length;
     const verb = el.optStart.checked ? 'Export' : 'Queue';
     el.btnGo.textContent = n ? `${verb} everything · ${plural(n, 'file')}` : `${verb} everything`;
@@ -753,7 +762,7 @@
     el.pvOverlay.classList.toggle('hidden', !previewReady() || playing);
     el.pvMute.classList.toggle('muted', pv.muted);
     el.markSource.textContent = markingFromPreview()
-      ? 'Marks come from the preview. Space plays, arrows step a frame.'
+      ? 'Marks come from the preview. Space plays, arrow keys step a frame.'
       : previewReady()
         ? "Marks come from Resolve's playhead."
         : '';
@@ -770,7 +779,7 @@
     }
     if (markingFromPreview()) {
       el.playhead.textContent = tc;
-      if (state.press) el.padLive.textContent = `IN ${state.press.tc} · ${secondsLabel(abs - state.press.absIn + 1, videoFps())}`;
+      if (state.press) el.keyCutLive.textContent = `IN ${state.press.tc} · ${secondsLabel(abs - state.press.absIn + 1, videoFps())}`;
     }
   }
 
@@ -919,7 +928,7 @@
     el.playState.className = `play${r.playing ? ' on' : ''}`;
     el.playState.lastElementChild.textContent = r.playing ? 'playing in Resolve' : 'stopped';
     el.captureTl.textContent = `${r.timeline} · ${fpsLabel(r.fps)}`;
-    if (state.press) el.padLive.textContent = `IN ${state.press.tc} · ${secondsLabel(r.absFrame - state.press.absIn + 1, r.fps)}`;
+    if (state.press) el.keyCutLive.textContent = `IN ${state.press.tc} · ${secondsLabel(r.absFrame - state.press.absIn + 1, r.fps)}`;
   }
 
   function onResolvePlayhead(data) {
@@ -976,33 +985,88 @@
     el.captureHint.className = `hint${warn.length ? ' warn' : ''}`;
     el.captureHint.textContent = warn.length
       ? warn.join(' ')
-      : 'Hold the pad (or the M key) while it plays to mark a cut; tap for a still. Marks are saved as timeline markers, so you can see and delete them in Resolve too.';
+      : `Hold ${keyName(state.keys.cut)} while it plays to select a cut, press ${keyName(state.keys.still)} for a still. Keys work while this window is focused. Marks are saved as timeline markers, so you can see and delete them in Resolve too.`;
   }
 
-  function flashPad(kind) {
-    const cls = kind === 'still' ? 'flash-still' : 'flash-cut';
-    el.pad.classList.add(cls);
-    setTimeout(() => el.pad.classList.remove(cls), 220);
+  // ------------------------------------------------------------ keys: hold cut, press still
+
+  function keyName(key) {
+    const k = String(key || '');
+    if (k === ' ') return 'Space';
+    if (k.length === 1) return k.toUpperCase();
+    return k.replace(/^arrow/, '').replace(/^./, (ch) => ch.toUpperCase());
+  }
+
+  function renderKeys() {
+    el.kbdCut.textContent = keyName(state.keys.cut);
+    el.kbdStill.textContent = keyName(state.keys.still);
+    el.pickCut.querySelector('kbd').textContent = state.picking === 'cut' ? 'press a key…' : keyName(state.keys.cut);
+    el.pickStill.querySelector('kbd').textContent = state.picking === 'still' ? 'press a key…' : keyName(state.keys.still);
+    el.pickCut.classList.toggle('picking', state.picking === 'cut');
+    el.pickStill.classList.toggle('picking', state.picking === 'still');
+    el.keyCut.setAttribute('aria-label', `Hold ${keyName(state.keys.cut)} to mark a cut`);
+    el.keyStill.setAttribute('aria-label', `Press ${keyName(state.keys.still)} to mark a still`);
+  }
+
+  function normalizeKey(e) {
+    return e.key.length === 1 ? e.key.toLowerCase() : e.key.toLowerCase();
+  }
+
+  const RESERVED_KEYS = new Set([' ', 'arrowleft', 'arrowright', 'arrowup', 'arrowdown', 'escape', 'enter', 'tab', 'shift', 'control', 'alt', 'meta', 'capslock']);
+
+  function startPicking(which) {
+    state.picking = state.picking === which ? null : which;
+    renderKeys();
+  }
+
+  function finishPicking(e) {
+    const key = normalizeKey(e);
+    if (key === 'escape') {
+      state.picking = null;
+      renderKeys();
+      return;
+    }
+    if (RESERVED_KEYS.has(key) || e.metaKey || e.ctrlKey || e.altKey) {
+      el.keysHint.textContent = 'That key is reserved. Pick a letter, digit or function key.';
+      return;
+    }
+    const other = state.picking === 'cut' ? state.keys.still : state.keys.cut;
+    if (key === other) {
+      el.keysHint.textContent = 'The cut and still keys have to differ.';
+      return;
+    }
+    state.keys[state.picking] = key;
+    state.picking = null;
+    el.keysHint.textContent = 'Click a key to change it, then press the new one. Keys work while the ExportX window is focused.';
+    api.saveSettings({ keyCut: state.keys.cut, keyStill: state.keys.still }).catch(() => {});
+    renderKeys();
+    renderMarks();
+  }
+
+  function flashKey(kind) {
+    const btn = kind === 'still' ? el.keyStill : el.keyCut;
+    btn.classList.add('flash');
+    setTimeout(() => btn.classList.remove('flash'), 220);
   }
 
   function pressAt() {
-    return markingFromPreview() ? { absFrame: absFrameFromVideo(), source: 'preview' } : undefined;
+    return markingFromPreview() ? { absFrame: absFrameFromVideo(), source: 'preview' } : {};
   }
 
   async function beginPress() {
     if (state.pressing || !isConnected()) return;
     state.pressing = true;
-    el.pad.classList.add('holding');
-    el.padLive.textContent = '…';
+    el.keyCut.classList.add('holding');
+    el.keyCutLive.textContent = '…';
     state.pressPromise = api.markBegin(pressAt());
     try {
       state.press = await state.pressPromise;
-      el.padLive.textContent = `IN ${state.press.tc}`;
+      el.keyCutLive.textContent = `IN ${state.press.tc}`;
     } catch (err) {
       state.press = null;
       state.pressing = false;
-      el.pad.classList.remove('holding');
-      el.padLive.textContent = '';
+      el.keyCut.classList.remove('holding');
+      el.keyCutLive.textContent = '';
       showBanner(err.message);
     }
   }
@@ -1012,16 +1076,30 @@
     state.pressing = false;
     if (state.pressPromise) await state.pressPromise.catch(() => {});
     const had = state.press;
-    const at = pressAt();
+    const at = { ...pressAt(), kind: 'cut' };
     state.press = null;
-    el.pad.classList.remove('holding');
-    el.padLive.textContent = '';
+    el.keyCut.classList.remove('holding');
+    el.keyCutLive.textContent = '';
     if (!had) return;
     try {
       const result = await api.markEnd(at);
       applyMarks(result);
       if (result.added) {
-        flashPad(result.added.kind);
+        flashKey('cut');
+        showBanner(null);
+      }
+    } catch (err) {
+      showBanner(err.message);
+    }
+  }
+
+  async function markStill() {
+    if (!isConnected()) return;
+    try {
+      const result = await api.markStill(pressAt());
+      applyMarks(result);
+      if (result.added) {
+        flashKey('still');
         showBanner(null);
       }
     } catch (err) {
@@ -1035,50 +1113,65 @@
   }
 
   function wireCapture() {
-    el.pad.addEventListener('pointerdown', (e) => {
+    el.keyCut.addEventListener('pointerdown', (e) => {
       if (e.button !== 0) return;
       e.preventDefault();
       try {
-        el.pad.setPointerCapture(e.pointerId);
+        el.keyCut.setPointerCapture(e.pointerId);
       } catch (_err) {
         /* not supported */
       }
       beginPress();
     });
-    el.pad.addEventListener('pointerup', endPress);
-    el.pad.addEventListener('pointercancel', endPress);
-    el.pad.addEventListener('keydown', (e) => {
+    el.keyCut.addEventListener('pointerup', endPress);
+    el.keyCut.addEventListener('pointercancel', endPress);
+    el.keyCut.addEventListener('keydown', (e) => {
       if (e.key === ' ' || e.key === 'Enter') e.preventDefault();
     });
+    el.keyStill.addEventListener('click', markStill);
+    el.keyStill.addEventListener('keydown', (e) => {
+      if (e.key === ' ' || e.key === 'Enter') e.preventDefault();
+    });
+    el.pickCut.addEventListener('click', () => startPicking('cut'));
+    el.pickStill.addEventListener('click', () => startPicking('still'));
+
     document.addEventListener('keydown', (e) => {
-      if (isTyping(e) || state.view !== 'export') return;
-      if (e.key === ' ') {
+      if (state.picking) {
         e.preventDefault();
-        if (e.repeat) return;
-        if (previewReady()) togglePlay();
-        else beginPress();
-      } else if (e.key.toLowerCase() === 'm') {
+        if (!e.repeat) finishPicking(e);
+        return;
+      }
+      if (isTyping(e) || state.view !== 'export' || e.metaKey || e.ctrlKey || e.altKey) return;
+      const key = normalizeKey(e);
+      if (key === state.keys.cut) {
         e.preventDefault();
         if (!e.repeat) beginPress();
-      } else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+      } else if (key === state.keys.still) {
+        e.preventDefault();
+        if (!e.repeat) markStill();
+      } else if (key === ' ') {
+        e.preventDefault();
+        if (!e.repeat && previewReady()) togglePlay();
+      } else if (key === 'arrowleft' || key === 'arrowright') {
         if (previewReady()) {
           e.preventDefault();
-          stepFrame(e.key === 'ArrowLeft' ? -1 : 1);
+          stepFrame(key === 'arrowleft' ? -1 : 1);
         }
       }
     });
     document.addEventListener('keyup', (e) => {
       if (isTyping(e) || state.view !== 'export') return;
-      if (e.key === ' ' && !previewReady()) {
-        e.preventDefault();
-        endPress();
-      } else if (e.key.toLowerCase() === 'm') {
+      if (normalizeKey(e) === state.keys.cut) {
         e.preventDefault();
         endPress();
       }
     });
     window.addEventListener('blur', () => {
       if (state.pressing) endPress();
+      if (state.picking) {
+        state.picking = null;
+        renderKeys();
+      }
     });
     $('btn-clear-cuts').addEventListener('click', () => confirmClear('cut'));
     $('btn-clear-stills').addEventListener('click', () => confirmClear('still'));
@@ -1296,6 +1389,8 @@
     el.optUnderscore.checked = settings.underscoreSpaces !== false;
     el.optClear.checked = Boolean(settings.clearExisting);
     el.optStart.checked = settings.startRender !== false;
+    state.keys = { cut: String(settings.keyCut || 'c').toLowerCase(), still: String(settings.keyStill || 's').toLowerCase() };
+    renderKeys();
     const history = await api.logHistory().catch(() => []);
     el.log.textContent = history.join('\n');
     renderMarks();

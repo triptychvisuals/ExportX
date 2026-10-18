@@ -2,7 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { marksFromMarkers, classifyPress, KINDS } = require('../src/marks');
+const { marksFromMarkers, KINDS } = require('../src/marks');
 
 const info = { startFrame: 86400, fps: 24, dropFrame: false };
 
@@ -29,13 +29,6 @@ test('marks are rebuilt from timeline markers in order, ignoring foreign markers
   const still = marks[0];
   assert.equal(still.absIn, still.absOut);
   assert.equal(still.durationFrames, 1);
-});
-
-test('a short press is a still, a long press is a cut', () => {
-  assert.deepEqual(classifyPress({ absIn: 100, absOut: 100, fps: 24 }), { kind: 'still', absIn: 100, absOut: 100 });
-  assert.deepEqual(classifyPress({ absIn: 100, absOut: 105, fps: 24 }), { kind: 'still', absIn: 100, absOut: 100 });
-  assert.deepEqual(classifyPress({ absIn: 100, absOut: 160, fps: 24 }), { kind: 'cut', absIn: 100, absOut: 160 });
-  assert.deepEqual(classifyPress({ absIn: 160, absOut: 100, fps: 24 }), { kind: 'cut', absIn: 100, absOut: 160 });
 });
 
 test('kinds carry the marker colour and customData used in Resolve', () => {

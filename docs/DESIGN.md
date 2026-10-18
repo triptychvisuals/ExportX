@@ -9,7 +9,7 @@ These notes are the brief for the ExportX panel (`ui/`). Section 9 lists what is
 The first pass copied Editor X's workspace literally: a tools rail, a canvas, an inspector and a breakpoint strip. It looked like Editor X and it was too much to read for a tool whose whole job is three actions. The second pass keeps the look and drops the structure. The panel is now one column of three numbered steps, because the job really is a sequence:
 
 1. **What to export**: a plain checklist and a folder.
-2. **Mark while it plays**: the playhead, one big pad, two short lists.
+2. **Mark while it plays**: the preview, the playhead, two keys, two short lists.
 3. **Export**: one big button, two small ones, progress.
 
 Everything that is set up once and then left alone (file-name pattern, the deliverables themselves, other timelines, the log) lives in a second tab, **Settings**. Nothing was removed from the plugin; it was moved out of the first read. Step 2 later gained a **preview video** above the pad, because marking blind against Resolve's viewer in another window was the one place the three steps still asked the user to look away.
@@ -78,7 +78,8 @@ Type scale: 10.5 px tracked uppercase labels, 12–13 px UI text, 14 px delivera
 - **Step title** a 24 px white disc with the step number, then the title in display type.
 - **Choice row** 40 px: 18 px tick (accent when on), name (14 px / 500) with an optional `per cut` / `per still` tag in the mark colour, and a monospace codec summary at the right (hidden at phone width).
 - **Viewer** a 16:9 black box (capped at 34 % of the window height) above the pad. Empty state: one sentence, a `Render preview` button, one line of explanation. Rendering: a thin bar. Ready: the video, a big centred play glyph when paused, a **scrub bar** whose track shows cuts as cyan blocks and stills as pink ticks, and a transport row (play, mute, the preview's timecode, where marks come from, `re-render`, `mark from Resolve instead`). A stale preview gets an amber note in the corner.
-- **Pad** full width, 128 px tall, `Hold for a cut` / `Tap for a still`. Holding: accent fill, `IN <tc> · <elapsed>` along the bottom, 1 % scale-down. Flash: cyan or pink for 220 ms. Disabled at 40 % when not connected.
+- **Keys** two buttons side by side, each with a keycap showing its key (`C`, `S` by default): `Hold for a cut` and `Still`. Holding the cut key (or the button) fills it cyan with `IN <tc> · <elapsed>` along the bottom; releasing flashes it. Pressing the still key flashes the still button pink. The colours are the marker colours, so the panel and Resolve's timeline agree. Disabled at 40 % when not connected.
+- **Settings › Keys** a short list of rows, each with a keycap; the cut and still keycaps are buttons that read `press a key…` while rebinding. Space, the arrows and ⌘↩ are shown but fixed.
 - **Mark row** 28 px monospace: coloured dot and number, `in → out` and duration (cuts) or the frame's timecode (stills), `×` to remove. Click moves the playhead. `clear` asks for a second click within four seconds instead of a dialog.
 - **Export** one 48 px accent pill (`Export everything · 6 files`), `Cuts only` / `Stills only` pills, a summary line (`3 final exports · 2 cuts · 1 still → folder`), then a 4 px bar with `17% · 1 of 6 done` and a compact file list with status dots.
 - **Tabs** a two-segment pill in the top bar, `Export` and `Settings`; the active segment is white on black like the timeline chips.
@@ -90,7 +91,7 @@ Type scale: 10.5 px tracked uppercase labels, 12–13 px UI text, 14 px delivera
 
 - **Disconnected / no project**: red dot, banner explaining the fix, pad and buttons disabled, the checklist still visible.
 - **Ready**: green dot; `Export everything` shows the file count once a folder is set.
-- **Marking**: the pad is held; the playhead keeps updating and the pad shows the in point and elapsed time. On release the mark appears in its list, the summary re-plans, and the pad flashes the mark's colour.
+- **Marking**: the cut key is held; the playhead keeps updating and the cut button shows the in point and elapsed time. On release the cut appears in its list, the summary re-plans, and the button flashes. The still key marks on the key-down and flashes pink.
 - **Nothing to export a mark with**: the hint under the pad turns amber and names the box to tick in step 1.
 - **Queued**: file rows appear with grey dots; the bar reads `6 files queued in Resolve`.
 - **Rendering**: `Stop rendering` replaces the primary button; the current file's dot is accent with a halo; the bar and line move once a second.
@@ -110,7 +111,8 @@ Wix Madefor Text and Display are released under the SIL Open Font License 1.1 an
 ## 8. Open items
 
 - Optional light theme for users who run Resolve's light UI.
-- Keyboard: arrow keys in the checklist; nudge a mark's in/out by a frame. (`⌘/Ctrl+Enter` exports, Space/M marks.)
+- Keyboard: arrow keys in the checklist; nudge a mark's in/out by a frame. (`⌘/Ctrl+Enter` exports, C holds a cut, S marks a still, Space plays.)
+- Global hotkeys so C and S work while Resolve has focus. Electron's `globalShortcut` fires on key-down only and steals the key from Resolve, so this needs a native key hook; for now keys work while the panel is focused, which is the normal case with the preview playing in the panel.
 - A mini timeline strip under the playhead showing marks as cyan/pink blocks, like Editor X's breakpoint ruler.
 - In-panel profile editing (today: `Edit profiles…` opens the folder).
 

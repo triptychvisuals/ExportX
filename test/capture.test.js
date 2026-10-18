@@ -3,7 +3,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { ResolveBridge } = require('../src/resolve');
-const { classifyPress } = require('../src/marks');
 const { createMockResolve } = require('./helpers/mock-resolve');
 
 function setup() {
@@ -25,16 +24,14 @@ test('timelineInfo and playhead read Resolve timecode as absolute frames', async
   assert.equal(ph.relFrame, 24 * 12 + 5);
 });
 
-test('a hold becomes a cut marker, a tap a still marker, both relative to the timeline start', async () => {
+test('a held cut key becomes a cut marker, the still key a still marker, both relative to the timeline start', async () => {
   const { bridge, tl } = setup();
-  const press = classifyPress({ absIn: 86400 + 48, absOut: 86400 + 48 + 71, fps: 24 });
-  const afterCut = await bridge.addMark(press);
+  const afterCut = await bridge.addMark({ kind: 'cut', absIn: 86400 + 48, absOut: 86400 + 48 + 71 });
   assert.equal(afterCut.added.kind, 'cut');
   assert.equal(afterCut.added.index, 1);
   assert.deepEqual(tl.markers[48] && [tl.markers[48].color, tl.markers[48].duration, tl.markers[48].customData], ['Cyan', 72, 'exportx:cut']);
 
-  const tap = classifyPress({ absIn: 86400 + 200, absOut: 86400 + 203, fps: 24 });
-  const afterStill = await bridge.addMark(tap);
+  const afterStill = await bridge.addMark({ kind: 'still', absIn: 86400 + 200, absOut: 86400 + 200 });
   assert.equal(afterStill.added.kind, 'still');
   assert.equal(tl.markers[200].customData, 'exportx:still');
   assert.equal(tl.markers[200].duration, 1);

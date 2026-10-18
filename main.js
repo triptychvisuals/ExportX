@@ -25,7 +25,6 @@ const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
 
 const { ResolveBridge } = require('./src/resolve');
 const { BatchExporter, DEFAULT_TEMPLATE, TARGETS } = require('./src/batch');
-const { classifyPress } = require('./src/marks');
 const { framesToTc } = require('./src/timecode');
 const { sanitize } = require('./src/naming');
 const profilesLib = require('./src/profiles');
@@ -41,7 +40,8 @@ const DEFAULT_SETTINGS = {
   selectedProfiles: null,
   clearExisting: false,
   startRender: true,
-  minCutSeconds: 0.3,
+  keyCut: 'c',
+  keyStill: 's',
 };
 const PREVIEW_DIR = path.join(USER_DIR, 'previews');
 // The preview proxy: small, fast, same engine. Height follows the timeline's aspect ratio.
@@ -444,12 +444,13 @@ handle('exportx:mark-end', async (at) => {
   const info = await currentInfo();
   if (info.name !== press.timeline) throw new Error('The timeline changed during the press; mark discarded');
   const pos = await pressFrame(at, info);
-  const { minCutSeconds } = readSettings();
-  const press2 = classifyPress({ absIn: press.absIn, absOut: pos.absFrame, fps: info.fps, minCutSeconds });
-  const result = await bridge.addMark(press2);
+  const kind = at && at.kind === 'still' ? 'still' : 'cut';
+  const absIn = Math.min(press.absIn, pos.absFrame);
+  const absOut = kind === 'still' ? absIn : Math.max(press.absIn, pos.absFrame);
+  const result = await bridge.addMark({ kind, absIn, absOut });
   broadcastMarks(result);
   const a = result.added;
-  log(a ? `Marked ${a.kind} ${a.index}: ${a.tcIn}${a.kind === 'cut' ? ` → ${a.tcOut} (${a.duration})` : ''}` : `Marked ${press2.kind}`);
+  log(a ? `Marked ${a.kind} ${a.index}: ${a.tcIn}${a.kind === 'cut' ? ` → ${a.tcOut} (${a.duration})` : ''}` : `Marked ${kind}`);
   return result;
 });
 

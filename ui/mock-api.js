@@ -106,7 +106,7 @@
     if (opts && opts.underscoreSpaces) out = out.replace(/\s+/g, '_').replace(/_{2,}/g, '_');
     return out;
   };
-  let settings = { targetDir: '/Volumes/Deliver/SpotA_Launch', nameTemplate: '{yymmdd}_{project}_{label}', underscoreSpaces: true, selectedProfiles: null, clearExisting: false, startRender: true };
+  let settings = { targetDir: '/Volumes/Deliver/SpotA_Launch', nameTemplate: '{yymmdd}_{project}_{label}', underscoreSpaces: true, selectedProfiles: null, clearExisting: false, startRender: true, keyCut: 'c', keyStill: 's' };
 
   function plan(req) {
     const tls = req.timelines || ['Main Edit'];
@@ -233,11 +233,11 @@
     markEnd: async (at) => {
       if (!press) throw new Error('No press in progress');
       const end = at && Number.isFinite(Number(at.absFrame)) ? Math.round(Number(at.absFrame)) : playheadAbs;
+      const kind = at && at.kind === 'still' ? 'still' : 'cut';
       const a = Math.min(press.absIn, end);
-      const b = Math.max(press.absIn, end);
+      const b = kind === 'still' ? a : Math.max(press.absIn, end);
       press = null;
       const frames = b - a + 1;
-      const kind = frames <= 7 ? 'still' : 'cut';
       if (markers[a - START]) throw new Error(`There is already a marker at ${tc(a)}`);
       markers[a - START] = { kind, dur: kind === 'still' ? 1 : frames };
       const marks = buildMarks();
