@@ -9,17 +9,19 @@ node --test                              # unit tests (mock Resolve, no Electron
 node scripts/check-syntax.js             # parse-check all JS
 python3 python/exportx_batch.py --selftest
 EXPORTX_MOCK=1 npx electron .            # run the UI against the mock (needs `npm install` once); the mock playhead "plays"
+node scripts/build-preview.js            # docs/preview.html: panel + ui/mock-api.js in one file, open in a browser
+node scripts/screenshot.js               # docs/screenshots/*.png via Playwright (preinstalled in cloud sessions)
 ```
 
 CI (`.github/workflows/ci.yml`) runs exactly those plus a manifest XML parse. Keep them green.
 
-To look at the panel without Electron: render `ui/index.html` in headless Chromium with a stubbed `window.exportx` (see the Playwright approach in the first session's scratchpad; Playwright + Chromium are preinstalled in cloud sessions) and read the PNGs. Do this after any UI change; it caught a grid bug and a class-name collision.
+After any UI change run `node scripts/screenshot.js` and look at the PNGs (it caught a grid bug and a class-name collision), then `node scripts/build-preview.js` so `docs/preview.html` stays current. The panel is deliberately simple: one column, three numbered steps, everything optional under "More options" (see `docs/DESIGN.md` §0). Keep it that way; add to More options before adding to a step.
 
 ## Layout
 
 - `main.js` Electron main: loads `WorkflowIntegration.node`, owns `ResolveBridge` + `BatchExporter`, IPC handlers (`exportx:*`), polls the playhead every 150 ms and marks every 2 s and pushes `exportx:playhead` / `exportx:marks`, turns `mark-begin`/`mark-end` into markers, settings in `~/.exportx/settings.json`, render monitor.
 - `preload.js` the only renderer↔main bridge (`window.exportx`). Renderer has no Node access; keep it that way.
-- `ui/` vanilla HTML/CSS/JS panel. Design notes and tokens: `docs/DESIGN.md`. Escape anything inserted via `innerHTML` (`escapeHtml`). Fonts in `ui/fonts/` are OFL (Wix Madefor).
+- `ui/` vanilla HTML/CSS/JS panel. Design notes and tokens: `docs/DESIGN.md`. Escape anything inserted via `innerHTML` (`escapeHtml`). Fonts in `ui/fonts/` are OFL (Wix Madefor). `ui/mock-api.js` is the browser fake used by the preview and screenshots; extend it when the bridge API grows.
 - `src/resolve.js` `ResolveBridge`. **Every Resolve call is awaited**; do not assume sync or async. Format/codec ids are matched loosely via `matchEntry`; codec `auto` = first codec of the format. Also timeline info, playhead, seek, and marker-backed marks.
 - `src/batch.js` `BatchExporter.plan/queue/render/waitForCompletion` and the pure `expandItems()` (profiles × timelines × marks → items). Per-item errors are collected, not thrown; "nothing marked" is a note.
 - `src/marks.js` mark kinds (`exportx:cut` cyan, `exportx:still` pink), `marksFromMarkers`, `classifyPress` (tap vs hold).

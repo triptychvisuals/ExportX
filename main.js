@@ -493,10 +493,10 @@ handle('exportx:log-history', async () => [...state.logBuffer]);
 
 function createWindow() {
   state.win = new BrowserWindow({
-    width: 1200,
-    height: 860,
-    minWidth: 900,
-    minHeight: 620,
+    width: 640,
+    height: 940,
+    minWidth: 440,
+    minHeight: 600,
     title: 'ExportX',
     backgroundColor: '#0f0f0f',
     autoHideMenuBar: true,

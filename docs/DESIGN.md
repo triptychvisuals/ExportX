@@ -4,18 +4,37 @@ Editor X was Wix's web-design platform for designers and agencies: a closed beta
 
 These notes are the brief for the ExportX panel (`ui/`). Section 9 lists what is confirmed by sources and what is recalled from using the product; treat the recalled parts as design intent, not as facts about Wix.
 
+## 0. Simplicity first
+
+The first pass copied Editor X's workspace literally: a tools rail, a canvas, an inspector and a breakpoint strip. It looked like Editor X and it was too much to read for a tool whose whole job is three actions. The second pass keeps the look and drops the structure. The panel is now one column of three numbered steps, because the job really is a sequence:
+
+1. **What to export**: a plain checklist and a folder.
+2. **Mark while it plays**: the playhead, one big pad, two short lists.
+3. **Export**: one big button, two small ones, progress.
+
+Everything that is sometimes useful but never needed to understand the tool (file-name pattern, other timelines, queue-only, profile files, formats list, the log) sits under a single **More options** fold at the bottom. Nothing was removed from the plugin; it was moved out of the first read.
+
+Rules that came out of the rewrite:
+
+- A first-time user should be able to say what each step does from its heading alone.
+- One primary button. The two secondary buttons exist only because the user asked for them by name ("export the stills").
+- Plain names for deliverables ("Final 4K", "Social cuts", "Stills TIFF"); codec details are secondary text on the right, hidden at phone width.
+- Tags only where they explain behaviour (`per cut`, `per still`); the default case gets no tag.
+- The page scrolls. No fixed grid, no panes, no inner scrollers except the two mark lists and the log.
+- The panel must still work at 440 px wide, because it floats next to Resolve's viewer.
+
 ## 1. The ten notes
 
-1. **Chrome is black, content is bright.** Editor X put its controls in near-black bars and left the page itself as the brightest thing on screen. ExportX uses a black top bar and navigator, dark-grey panes, and reserves pure white for the things you read: names, numbers, filenames.
-2. **One accent, spent carefully.** The accent marks the selected thing, the running thing, and the primary action. Nothing else is coloured. Status colours (green, amber, red) appear only on status.
-3. **A three-pane workspace.** Tools on the left, the work in the middle, properties of the selected thing on the right, primary action top-right. Editor X's left rail / canvas / Inspector / Publish becomes ExportX's Deliverables rail / Output & queue / Inspector / Queue & Render.
-4. **The Inspector is the truth.** Click anything and its exact properties appear as label-left / value-right rows with units visible. In ExportX the selected deliverable shows container, codec, resolution, frame rate, audio, quality flags, naming, and an example filename, plus every raw Resolve setting it will send.
-5. **Contexts live in a strip above the canvas.** Editor X's breakpoint navigator sat across the top of the canvas and let you switch what you were designing for. ExportX puts timelines there: the current one marked, any number selectable, and the whole batch repeats per selection.
-6. **Layers: click selects, a control toggles.** In the Layers panel clicking a row selected the element; a separate control hid or showed it. ExportX's rail works the same way: click a deliverable to inspect it, tick the box to include it in the batch.
-7. **Typography carries hierarchy.** Big, tight, geometric display type for figures and titles; tiny tracked uppercase labels for sections; tabular numerals for anything that counts. The typeface is Wix Madefor, the geometric sans Wix commissioned from Dalton Maag (see §7).
-8. **Precision cues, not adjectives.** Show the number and the unit: `1920 × 1080`, `48000 Hz`, `24 bit`, `3 jobs`. Where a value is inherited, say from where (`Timeline`), not "auto".
-9. **Hairlines, not shadows.** Flat surfaces separated by 1 px lines. Small radii (4 px) on fields and rows, full pills only on the top-bar actions and chips, no drop shadows, no gradients.
-10. **Motion is fast and informative.** 150 ms state changes, no bounce. Progress is a thin accent line under the top bar plus per-job bars; it turns green when done and red if anything failed.
+1. **Chrome is black, content is bright.** Editor X put its controls in near-black bars and left the page itself as the brightest thing on screen. ExportX uses a black top bar, a near-black page, and reserves pure white for the things you read: names, numbers, filenames.
+2. **One accent, spent carefully.** The accent marks the included thing, the running thing, and the primary action. Nothing else is coloured. Status colours (green, amber, red) appear only on status; cyan and pink are the marker colours and mean cut and still, in the panel and on Resolve's timeline alike.
+3. **Steps instead of panes.** Editor X's left rail / canvas / Inspector / Publish became ExportX's three steps and one button. The sequence is the structure.
+4. **Precision where it matters.** Click anything and the exact numbers are there: the playhead to the frame, every mark with in and out timecode and duration, every file with its name and state. The inspector is gone; the numbers moved next to the things they describe.
+5. **Contexts live in a strip.** Editor X's breakpoint navigator sat across the top of the canvas. ExportX's timeline chips do the same for timelines, but under More options, since one timeline is the normal case.
+6. **Layers: click selects, a control toggles.** Kept as a single tick box per deliverable; with no inspector there is nothing else to select.
+7. **Typography carries hierarchy.** Big, tight, geometric display type for the step titles, the playhead and the pad; tiny tracked uppercase labels for list headings; tabular numerals for anything that counts. The typeface is Wix Madefor, the geometric sans Wix commissioned from Dalton Maag (see §7).
+8. **Precision cues, not adjectives.** `01:00:04:00 → 01:00:09:11  5.5s`, `3840×2160`, `17% · 1 of 6 done`. Where a value is inherited, say from where (`Timeline`), not "auto".
+9. **Hairlines, not shadows.** Flat surfaces separated by 1 px lines. 6 px radii on fields and rows, full pills on buttons and chips, no drop shadows, no gradients.
+10. **Motion is fast and informative.** 150 ms state changes, no bounce. Progress is a thin accent line under the top bar plus one bar in step 3; both turn green when done and red if anything failed. The pad flashes cyan or pink for 220 ms when a mark lands.
 
 ## 2. Token sheet
 
@@ -23,85 +42,73 @@ All tokens are CSS custom properties on `:root` in `ui/styles.css`. Change the a
 
 | Token | Value | Use |
 | --- | --- | --- |
-| `--x-chrome` | `#000000` | Top bar, timeline navigator, log drawer |
-| `--x-bg` | `#0f0f0f` | Canvas background |
-| `--x-surface` | `#161616` | Panes and sheets |
-| `--x-surface-2` | `#1d1d1d` | Inputs, hovered rows |
-| `--x-surface-3` | `#262626` | Selected rows |
-| `--x-line` | `#262626` | Hairlines |
-| `--x-line-2` | `#343434` | Control borders |
-| `--x-text` | `#ffffff` | Primary text |
-| `--x-text-2` | `#a3a3a3` | Secondary text, labels |
-| `--x-text-3` | `#6f6f6f` | Tertiary text, placeholders |
-| `--x-accent` | `#3b7bff` | Selection, primary action, progress |
-| `--x-accent-2` | `#6a9bff` | Accent hover / text on dark |
+| `--x-chrome` | `#000000` | Top bar, log |
+| `--x-bg` | `#0f0f0f` | Page background |
+| `--x-surface` / `--x-surface-2` / `--x-surface-3` | `#161616` / `#1d1d1d` / `#262626` | Pad, inputs, hovered rows |
+| `--x-line` / `--x-line-2` | `#262626` / `#343434` | Hairlines, control borders |
+| `--x-text` / `--x-text-2` / `--x-text-3` | `#ffffff` / `#a3a3a3` / `#6f6f6f` | Primary, secondary, tertiary text |
+| `--x-accent` / `--x-accent-2` | `#3b7bff` / `#6a9bff` | Ticks, primary button, progress, holding pad |
+| `--x-cut` / `--x-still` | `#38c6d6` / `#e06fb8` | Cut and still marks (Resolve's cyan and pink) |
 | `--x-ok` / `--x-warn` / `--x-bad` | `#34c759` / `#e2b93b` / `#ff453a` | Status only |
-| `--x-radius` | `4px` | Fields, rows, sheets |
-| `--x-pill` | `999px` | Top-bar buttons, chips, status tags |
-| `--x-row` | `32px` | Rail and inspector row height |
-| `--x-font-display` | Wix Madefor Display | Figures, titles, wordmark |
+| `--x-radius` / `--x-pill` | `6px` / `999px` | Fields and rows / buttons and chips |
+| `--x-col` | `620px` | Column width |
+| `--x-font-display` | Wix Madefor Display | Step titles, playhead, pad, wordmark |
 | `--x-font-ui` | Wix Madefor Text | Everything else |
-| `--x-font-mono` | system monospace | Paths, filenames, ids, raw settings |
+| `--x-font-mono` | system monospace | Timecodes, filenames, codec ids |
 
-Type scale: 10.5 px tracked uppercase labels (`.label`), 12 px UI text, 12.5 px row titles, 14 px inspector title, 20 px display figures. Spacing on a 4 px grid; panes are 256 px (rail) and 300 px (inspector).
+Type scale: 10.5 px tracked uppercase labels, 12–13 px UI text, 14 px deliverable names, 17 px step titles, 20 px pad title, 24 px playhead. Spacing on a 4 px grid.
 
 ## 3. Editor X → ExportX mapping
 
 | Editor X | ExportX |
 | --- | --- |
-| Top bar with site name, Preview, **Publish** | Top bar with project › timeline breadcrumb, **Queue**, **Queue & Render** / **Stop** |
-| Breakpoint navigator above the canvas | Timeline navigator: chips per timeline, current marked, multi-select |
-| Layers panel (select vs. show/hide) | Deliverables rail (select vs. include) |
-| Canvas | Output sheet (folder, filename template, switches), "Will create" tree, Render queue |
-| Inspector (Layout / Design tabs, units) | Inspector for the selected deliverable, grouped Output / Frame / Audio / Quality / Naming / Raw settings |
+| Top bar with site name and **Publish** | Top bar with project › timeline; the primary button lives in step 3 |
+| Layers panel (select vs. show/hide) | Step 1 checklist |
+| Direct manipulation on the canvas (drag, dock, snap) | Step 2 pad: hold while the timeline plays to mark a cut, tap for a still; marks become Resolve timeline markers |
+| Inspector | Numbers placed next to their things: codec summary per deliverable, timecodes per mark, state per file |
+| Breakpoint navigator | Timeline chips under More options |
 | Site styles & Design Library | Profiles JSON (`profiles/`, `~/.exportx/profiles/`) |
 | Dev mode | Python edition and `--list` |
-| Thin progress on publish | Accent progress line under the top bar |
-| Direct manipulation on the canvas (drag, dock, snap) | The capture pad: hold while the timeline plays to mark a cut, tap to mark a still; marks become Resolve timeline markers |
+| Thin progress on publish | Accent progress line under the top bar + the step 3 bar |
 
 ## 4. Components
 
-- **Top bar** 44 px, black. Left: white square "X" mark and `ExportX` wordmark (Madefor Display 700/800). Middle: breadcrumb `Project › Timeline` in secondary text with the names in white. Right: connection dot and product/version, refresh icon, `Queue` (ghost pill), `Queue & Render` (accent pill), `Stop` (red pill) while rendering.
-- **Progress line** 2 px below the top bar. Width is the batch percentage; hidden at 0, green when complete, red when any job failed.
-- **Timeline navigator** 36 px, black. `TIMELINES` label, a row of pill chips; the selected chips invert to white-on-black with a blue dot on the current timeline. Hint text at the right states what will be rendered.
-- **Rail row** 32 px minimum: 16 px include box (accent when on), name (12.5 px / 500), monospace meta line `mov · ProRes422HQ · 1920×1080`. Selected row has a 2 px white left edge and `--x-surface-3` fill.
-- **Capture sheet** the first sheet on the canvas. Header: `CAPTURE`, timeline name and frame rate, a play dot that turns green while the playhead moves, and the playhead timecode in 22 px display type at the right. Below: the **pad** (left, 136 px tall, `Hold to mark a cut` / `Tap to mark a still`) and the **mark lists** (right, `CUTS n` and `STILLS n`, each row `01  01:00:04:00 → 01:00:09:11  5.5s  ×` in monospace with a cyan or pink dot; click a row to move the playhead there). Footer: `Export cuts`, `Export stills`, and a summary such as `3 cuts × 1 profile · 1 still × 1 profile`.
-- **Pad states**: idle (surface-2, hairline), hover (brighter hairline), **holding** (accent fill, `IN <tc> · <elapsed>` in monospace along the bottom edge, 1 % scale-down), **flash** (220 ms cyan for a cut, pink for a still, matching the marker colours in Resolve), disabled (40 % opacity when not connected). Space or M does the same as the pointer while the panel is focused.
-- **Sheet** a flat panel on the canvas with a label header and an optional display figure right-aligned (`3` jobs, `45 %`).
-- **Field row** 88 px label column, 30 px inputs with 4 px radius, accent border on focus. Template tokens are small bordered monospace chips that insert at the caret.
-- **Switch** 28 × 16 px, accent when on, label in secondary text.
-- **Tree** monospace list grouped by output folder, files indented, timeline · deliverable in secondary text at the right.
-- **Job row** timeline, deliverable, filename (mono), status tag (outlined pill, coloured by state), 2 px progress bar with tabular percentage.
-- **Inspector row** 26 px, label left in secondary text, value right in white; numbers tabular with a dimmed unit suffix; raw settings in monospace.
-- **Log drawer** a 28 px black bar showing the latest line; click to expand to 150 px of history.
+- **Top bar** 44 px, black, sticky. White square "X" mark and `ExportX` wordmark; connection dot and `Project › Timeline`; refresh icon.
+- **Progress line** 2 px under the top bar, sticky with it. Width is the batch percentage; green when complete, red when any job failed.
+- **Step title** a 24 px white disc with the step number, then the title in display type.
+- **Choice row** 40 px: 18 px tick (accent when on), name (14 px / 500) with an optional `per cut` / `per still` tag in the mark colour, and a monospace codec summary at the right (hidden at phone width).
+- **Pad** full width, 128 px tall, `Hold for a cut` / `Tap for a still`. Holding: accent fill, `IN <tc> · <elapsed>` along the bottom, 1 % scale-down. Flash: cyan or pink for 220 ms. Disabled at 40 % when not connected.
+- **Mark row** 28 px monospace: coloured dot and number, `in → out` and duration (cuts) or the frame's timecode (stills), `×` to remove. Click moves the playhead. `clear` asks for a second click within four seconds instead of a dialog.
+- **Export** one 48 px accent pill (`Export everything · 6 files`), `Cuts only` / `Stills only` pills, a summary line (`3 final exports · 2 cuts · 1 still → folder`), then a 4 px bar with `17% · 1 of 6 done` and a compact file list with status dots.
+- **More options** a `<details>` fold: file-name pattern with token chips, timeline chips, two switches, utility buttons, and the log.
 
 ## 5. States
 
-- **Disconnected / no project**: red dot, banner explaining the fix (which folder, which menu), actions disabled, everything else still visible so profiles can be reviewed.
-- **Ready**: green dot, actions enabled once at least one deliverable and a folder are set.
-- **Marking**: the pad is held; the playhead keeps updating, the pad shows the in point and elapsed time, nothing else changes. On release the new mark appears in its list, the "Will create" tree and inspector counts re-plan, and the pad flashes the mark's colour.
-- **Queued**: job rows appear with `READY` tags; figure shows `0 %`; the render queue sheet scrolls into view.
-- **Rendering**: `Stop` replaces `Queue & Render`; progress line and per-job bars move once a second; the rail and inspector stay usable.
-- **Done**: tags turn `COMPLETE` / `FAILED`; progress line green or red; banner only if something failed.
+- **Disconnected / no project**: red dot, banner explaining the fix, pad and buttons disabled, the checklist still visible.
+- **Ready**: green dot; `Export everything` shows the file count once a folder is set.
+- **Marking**: the pad is held; the playhead keeps updating and the pad shows the in point and elapsed time. On release the mark appears in its list, the summary re-plans, and the pad flashes the mark's colour.
+- **Nothing to export a mark with**: the hint under the pad turns amber and names the box to tick in step 1.
+- **Queued**: file rows appear with grey dots; the bar reads `6 files queued in Resolve`.
+- **Rendering**: `Stop rendering` replaces the primary button; the current file's dot is accent with a halo; the bar and line move once a second.
+- **Done**: dots green (or red), bar green or red, `All 6 done` or `Finished · 1 file failed` with the error under the file.
 
 ## 6. What we deliberately did not copy
 
-- **White panels.** Inside Editor X the Add, Layers and Inspector panels were light. ExportX lives inside Resolve's dark UI, so every pane is dark and the Editor X contrast comes from white type and the black chrome instead.
-- **Wix's exact blue.** The accent is a neighbouring electric blue, not Wix's brand colour. If you would rather match Resolve's warm accent, change `--x-accent` and `--x-accent-2` only.
-- **Pure black everywhere.** The marketing site was black on black; a tool used for hours needs a ladder (`#000 → #0f → #16 → #1d → #26`) so panes read as separate surfaces without borders doing all the work.
-- **Tabs in the inspector.** Our inspector is short enough to scroll; sections replace tabs.
+- **The workspace.** Rail, canvas and inspector are right for a page builder and wrong for a three-action tool (see §0).
+- **White panels.** Inside Editor X the Add, Layers and Inspector panels were light. ExportX lives inside Resolve's dark UI, so everything is dark and the Editor X contrast comes from white type and black chrome.
+- **Wix's exact blue.** The accent is a neighbouring electric blue, not Wix's brand colour. To match Resolve's warm accent, change `--x-accent` and `--x-accent-2` only.
+- **Pure black everywhere.** A tool used for hours needs a ladder (`#000 → #0f → #16 → #1d → #26`) so surfaces read as separate without borders doing all the work.
 
 ## 7. Typeface and licensing
 
-Wix Madefor Text and Display are released under the SIL Open Font License 1.1 and are on Google Fonts. The Latin woff2 files for the weights we use are bundled in `ui/fonts/` (from the `@fontsource/wix-madefor-*` packages) with the licence text, so the panel renders identically offline inside Resolve. Fallback stack: system UI sans.
+Wix Madefor Text and Display are released under the SIL Open Font License 1.1 and are on Google Fonts. The Latin woff2 files for the weights we use are bundled in `ui/fonts/` (from the `@fontsource/wix-madefor-*` packages) with the licence text, so the panel renders identically offline inside Resolve. The HTML preview (`docs/preview.html`, built by `scripts/build-preview.js`) loads the same faces from Google Fonts instead. Fallback stack: system UI sans.
 
 ## 8. Open items
 
-- Icon set: currently a handful of inline 1.5 px line icons; a consistent 16 px set would finish the look.
-- In-panel profile editing (the inspector is read-only; `Open JSON` opens the source file).
 - Optional light theme for users who run Resolve's light UI.
-- Keyboard: arrow keys in the rail; nudge a mark's in/out by a frame. (`⌘/Ctrl+Enter` queues & renders, Space/M marks.)
+- Keyboard: arrow keys in the checklist; nudge a mark's in/out by a frame. (`⌘/Ctrl+Enter` exports, Space/M marks.)
 - A mini timeline strip under the playhead showing marks as cyan/pink blocks, like Editor X's breakpoint ruler.
+- In-panel profile editing (today: `Edit profiles…` opens the folder).
 
 ## 9. Sources and confidence
 

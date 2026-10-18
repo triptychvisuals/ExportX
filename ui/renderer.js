@@ -6,18 +6,13 @@
   const $ = (id) => document.getElementById(id);
 
   const el = {
-    crumbProject: $('crumb-project'),
-    crumbTimeline: $('crumb-timeline'),
     connDot: $('conn-dot'),
     connText: $('conn-text'),
     banner: $('banner'),
     progressLine: $('progress-line'),
     progressFill: $('progress-fill'),
-    timelines: $('timelines'),
-    navHint: $('nav-hint'),
     profiles: $('profiles'),
-    profilesCount: $('profiles-count'),
-    userDir: $('user-dir'),
+    targetDir: $('target-dir'),
     captureTl: $('capture-tl'),
     playState: $('play-state'),
     playhead: $('playhead'),
@@ -28,55 +23,42 @@
     cutsCount: $('cuts-count'),
     stillsCount: $('stills-count'),
     captureHint: $('capture-hint'),
+    btnGo: $('btn-go'),
+    btnStop: $('btn-stop'),
     btnExportCuts: $('btn-export-cuts'),
     btnExportStills: $('btn-export-stills'),
-    targetDir: $('target-dir'),
+    exportSummary: $('export-summary'),
+    progress: $('progress'),
+    totalFill: $('total-fill'),
+    totalText: $('total-text'),
+    jobs: $('jobs'),
+    more: $('more'),
     nameTemplate: $('name-template'),
     tokens: $('tokens'),
-    optClear: $('opt-clear'),
+    timelines: $('timelines'),
+    navHint: $('nav-hint'),
     optStart: $('opt-start'),
-    preview: $('preview'),
-    previewCount: $('preview-count'),
-    previewSummary: $('preview-summary'),
-    btnGo: $('btn-go'),
+    optClear: $('opt-clear'),
     btnQueue: $('btn-queue'),
-    btnStop: $('btn-stop'),
-    jobs: $('jobs'),
-    jobsEmpty: $('jobs-empty'),
-    totalPct: $('total-pct'),
-    totalText: $('total-text'),
-    inspectorBody: $('inspector-body'),
-    inspectorKind: $('inspector-kind'),
-    drawer: $('drawer'),
+    userDir: $('user-dir'),
     log: $('log'),
-    logLast: $('log-last'),
   };
 
-  const TOKENS = ['{project}', '{timeline}', '{profile}', '{date}', '{time}', '{width}', '{height}', '{cut}', '{still}', '{tc}'];
+  const TOKENS = ['{project}', '{timeline}', '{profile}', '{date}', '{time}', '{cut}', '{still}', '{tc}'];
   const CHECK = '<svg viewBox="0 0 16 16"><path d="M3 8.5l3 3 7-7"/></svg>';
-  const FOLDER = '<svg viewBox="0 0 16 16"><path d="M2 4.5A1.5 1.5 0 0 1 3.5 3h3l1.5 1.5h4.5A1.5 1.5 0 0 1 14 6v5.5a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 11.5z"/></svg>';
-  const TARGET_LABEL = { timeline: 'Whole timeline', cuts: 'Each cut', stills: 'Each still' };
-  const GROUP_LABEL = { timeline: 'Final exports', cuts: 'Per cut', stills: 'Per still' };
-  const HANDLED_SETTINGS = new Set([
-    'TargetDir', 'CustomName', 'FormatWidth', 'FormatHeight', 'FrameRate', 'SelectAllFrames', 'MarkIn', 'MarkOut',
-    'ExportVideo', 'ExportAudio', 'AudioCodec', 'AudioBitDepth', 'AudioSampleRate', 'VideoQuality', 'EncodingProfile',
-    'MultiPassEncode', 'NetworkOptimization', 'ExportAlpha', 'ColorSpaceTag', 'GammaTag',
-  ]);
+  const TARGET_TAG = { cuts: ['per cut', 'cut'], stills: ['per still', 'still'] };
 
   const state = {
     status: null,
     profiles: [],
     included: new Set(),
-    selectedId: null,
     timelinesPicked: new Set(),
-    planItems: [],
+    plan: { items: [], notes: [] },
     jobs: [],
     statuses: new Map(),
     rendering: false,
     busy: false,
-    playhead: null,
     marks: [],
-    marksInfo: null,
     pressing: false,
     press: null,
     pressPromise: null,
@@ -91,7 +73,6 @@
   function appendLog(line) {
     el.log.textContent += (el.log.textContent ? '\n' : '') + line;
     el.log.scrollTop = el.log.scrollHeight;
-    el.logLast.textContent = line.replace(/^\[[^\]]*\]\s*/, '');
   }
 
   function showBanner(message, kind = 'error') {
@@ -126,16 +107,24 @@
     return s >= 60 ? `${Math.floor(s / 60)}m ${(s % 60).toFixed(1)}s` : `${s.toFixed(1)}s`;
   }
 
+  function plural(n, word) {
+    return `${n} ${word}${n === 1 ? '' : 's'}`;
+  }
+
   function isConnected() {
     return Boolean(state.status && state.status.connected && !state.status.error);
+  }
+
+  function profileTarget(p) {
+    return p.target === 'cuts' || p.target === 'stills' ? p.target : 'timeline';
   }
 
   function includedIds() {
     return state.profiles.filter((p) => state.included.has(p.id)).map((p) => p.id);
   }
 
-  function profileTarget(p) {
-    return TARGET_LABEL[p.target] ? p.target : 'timeline';
+  function countIncluded(target) {
+    return state.profiles.filter((p) => state.included.has(p.id) && profileTarget(p) === target).length;
   }
 
   function timelineList() {
@@ -164,26 +153,22 @@
     updateButtons();
   }
 
-  function countIncluded(target) {
-    return state.profiles.filter((p) => state.included.has(p.id) && profileTarget(p) === target).length;
-  }
-
   function updateButtons() {
     const ready = isConnected() && el.targetDir.value.trim().length > 0 && !state.busy && !state.rendering;
-    const can = ready && state.included.size > 0;
-    el.btnGo.disabled = !can;
-    el.btnQueue.disabled = !can;
-    el.btnStop.classList.toggle('hidden', !state.rendering);
-    el.btnGo.classList.toggle('hidden', state.rendering);
-    el.btnQueue.classList.toggle('hidden', state.rendering);
     const cuts = state.marks.filter((m) => m.kind === 'cut').length;
     const stills = state.marks.filter((m) => m.kind === 'still').length;
+    el.btnGo.disabled = !(ready && state.plan.items.length > 0);
+    el.btnQueue.disabled = el.btnGo.disabled;
     el.btnExportCuts.disabled = !(ready && cuts > 0 && countIncluded('cuts') > 0);
     el.btnExportStills.disabled = !(ready && stills > 0 && countIncluded('stills') > 0);
+    el.btnStop.classList.toggle('hidden', !state.rendering);
+    el.btnGo.classList.toggle('hidden', state.rendering);
     el.pad.disabled = !isConnected();
+    const n = state.plan.items.length;
+    el.btnGo.textContent = n ? `Export everything · ${plural(n, 'file')}` : 'Export everything';
   }
 
-  // ------------------------------------------------------------ status, crumbs, navigator
+  // ------------------------------------------------------------ status
 
   async function refreshStatus() {
     try {
@@ -192,38 +177,25 @@
       state.status = { connected: false, error: err.message };
     }
     const s = state.status;
-    if (s.userDir) {
-      el.userDir.textContent = `${slash(s.userDir)}/profiles/`;
-      el.userDir.title = el.userDir.textContent;
-    }
+    if (s.userDir) el.userDir.textContent = `${slash(s.userDir)}/profiles/`;
     if (!s.connected) {
       el.connDot.className = 'dot bad';
-      el.connText.textContent = 'Not connected';
+      el.connText.textContent = 'Not connected to Resolve';
       showBanner(s.error || 'Not connected to DaVinci Resolve.');
     } else if (s.error) {
       el.connDot.className = 'dot';
-      el.connText.textContent = `${s.product || 'Resolve'} ${s.version || ''}`.trim();
+      el.connText.textContent = `${s.product || 'Resolve'}`;
       showBanner(s.error, 'info');
     } else {
       el.connDot.className = 'dot ok';
-      el.connText.textContent = `${s.product}${s.version ? ` ${s.version}` : ''}${s.mock ? ' · mock' : ''}`;
+      el.connText.textContent = `${s.project}${s.timeline ? ` › ${s.timeline}` : ''}${s.mock ? ' · preview' : ''}`;
       showBanner(null);
-      if (s.rendering && !state.rendering) showBanner('Resolve is already rendering. Wait for it to finish before queuing more.', 'info');
+      if (s.rendering && !state.rendering) showBanner('Resolve is already rendering. Wait for it to finish before exporting more.', 'info');
     }
-    renderCrumbs();
     renderTimelines();
     updateButtons();
-    renderInspector();
-    schedulePreview();
+    schedulePlan();
     if (isConnected()) api.marks().then(applyMarks).catch(() => {});
-  }
-
-  function renderCrumbs() {
-    const s = state.status || {};
-    el.crumbProject.textContent = s.project || 'No project';
-    el.crumbProject.className = `crumb${s.project ? ' live' : ''}`;
-    el.crumbTimeline.textContent = s.timeline || 'No timeline';
-    el.crumbTimeline.className = `crumb${s.timeline ? ' live' : ''}`;
   }
 
   function renderTimelines() {
@@ -232,111 +204,87 @@
     for (const name of [...state.timelinesPicked]) if (!known.has(name)) state.timelinesPicked.delete(name);
     const current = list.find((t) => t.current);
     if (!state.timelinesPicked.size && current) state.timelinesPicked.add(current.name);
-
     el.timelines.innerHTML = '';
-    if (!list.length) {
-      el.navHint.textContent = isConnected() ? 'No timelines in this project' : '';
-      return;
-    }
     for (const tl of list) {
       const chip = document.createElement('button');
       chip.type = 'button';
       chip.className = `chip${state.timelinesPicked.has(tl.name) ? ' on' : ''}`;
-      chip.title = tl.current ? `${tl.name} (current timeline)` : tl.name;
       chip.innerHTML = `${tl.current ? '<i class="cur"></i>' : ''}${escapeHtml(tl.name)}`;
       chip.addEventListener('click', () => {
         if (state.timelinesPicked.has(tl.name)) state.timelinesPicked.delete(tl.name);
         else state.timelinesPicked.add(tl.name);
         renderTimelines();
-        schedulePreview();
+        schedulePlan();
       });
       el.timelines.appendChild(chip);
     }
     const picked = pickedTimelines();
-    const n = picked ? picked.length : 0;
-    el.navHint.textContent = n === 0 ? 'Renders the current timeline' : n === 1 ? '1 timeline' : `${n} timelines`;
+    el.navHint.textContent = !list.length
+      ? ''
+      : !picked || picked.length === 1
+        ? 'Exports the current timeline. Pick more to export them too.'
+        : `Exports ${picked.length} timelines.`;
   }
 
-  // ------------------------------------------------------------ deliverables rail
+  // ------------------------------------------------------------ step 1: choices
 
   async function loadProfiles(settings) {
     const { profiles, errors } = await api.profiles();
     state.profiles = profiles;
     const saved = settings && Array.isArray(settings.selectedProfiles) ? new Set(settings.selectedProfiles) : null;
     state.included = new Set(profiles.filter((p) => (saved ? saved.has(p.id) : p.enabledByDefault)).map((p) => p.id));
-    if (!profiles.some((p) => p.id === state.selectedId)) {
-      const first = profiles.find((p) => state.included.has(p.id)) || profiles[0];
-      state.selectedId = first ? first.id : null;
-    }
-    if (errors && errors.length) showBanner(`${errors.length} profile file(s) could not be read. See the log.`, 'info');
+    if (errors && errors.length) showBanner(`${errors.length} profile file(s) could not be read. See the log under More options.`, 'info');
     renderProfiles();
-    renderInspector();
   }
 
   function profileMeta(p) {
-    const parts = [p.format, p.codec];
+    const parts = [p.format, /^(auto|\*|first|default)$/i.test(p.codec) ? '' : p.codec];
     if (p.resolution) parts.push(`${p.resolution.width}×${p.resolution.height}`);
-    if (p.renderMode === 'individual') parts.push('clips');
-    return parts.join(' · ');
+    if (p.renderMode === 'individual') parts.push('per clip');
+    return parts.filter(Boolean).join(' · ');
   }
 
   function renderProfiles() {
     el.profiles.innerHTML = '';
-    el.profilesCount.textContent = state.profiles.length ? `${state.included.size}/${state.profiles.length}` : '';
     if (!state.profiles.length) {
-      el.profiles.innerHTML = '<li class="none">No profiles found.</li>';
+      el.profiles.innerHTML = '<li class="none">No deliverables found. Add profile JSON files (see More options).</li>';
       return;
     }
-    for (const target of ['timeline', 'cuts', 'stills']) {
-      const group = state.profiles.filter((p) => profileTarget(p) === target);
-      if (!group.length) continue;
-      const head = document.createElement('li');
-      head.className = 'layer-group';
-      head.innerHTML = `<span class="label">${GROUP_LABEL[target]}</span>`;
-      el.profiles.appendChild(head);
-      for (const p of group) {
-        const on = state.included.has(p.id);
-        const li = document.createElement('li');
-        li.className = `layer ${on ? 'on' : 'off'}${p.id === state.selectedId ? ' selected' : ''}`;
-        li.innerHTML =
-          `<span class="inc" role="checkbox" aria-checked="${on}" title="${on ? 'Exclude from batch' : 'Include in batch'}">${CHECK}</span>` +
-          `<div><div class="name">${escapeHtml(p.name)}</div><div class="meta">${escapeHtml(profileMeta(p))}</div></div>`;
-        li.querySelector('.inc').addEventListener('click', (e) => {
-          e.stopPropagation();
-          toggleInclude(p.id);
-        });
-        li.addEventListener('click', () => {
-          state.selectedId = p.id;
-          renderProfiles();
-          renderInspector();
-        });
-        el.profiles.appendChild(li);
-      }
+    const order = ['timeline', 'cuts', 'stills'];
+    const sorted = [...state.profiles].sort((a, b) => order.indexOf(profileTarget(a)) - order.indexOf(profileTarget(b)));
+    for (const p of sorted) {
+      const on = state.included.has(p.id);
+      const target = profileTarget(p);
+      const tag = TARGET_TAG[target] ? `<span class="tag ${TARGET_TAG[target][1]}">${TARGET_TAG[target][0]}</span>` : '';
+      const li = document.createElement('li');
+      li.className = `choice ${on ? 'on' : 'off'}`;
+      li.title = p.description || '';
+      li.innerHTML =
+        `<span class="inc" role="checkbox" aria-checked="${on}">${CHECK}</span>` +
+        `<div class="name">${escapeHtml(p.name)}${tag}</div>` +
+        `<span class="meta">${escapeHtml(profileMeta(p))}</span>`;
+      li.addEventListener('click', () => {
+        if (state.included.has(p.id)) state.included.delete(p.id);
+        else state.included.add(p.id);
+        renderProfiles();
+        updateButtons();
+        schedulePlan();
+        api.saveSettings({ selectedProfiles: includedIds() }).catch(() => {});
+      });
+      el.profiles.appendChild(li);
     }
   }
 
-  function toggleInclude(id, force) {
-    const on = force === undefined ? !state.included.has(id) : force;
-    if (on) state.included.add(id);
-    else state.included.delete(id);
-    renderProfiles();
-    renderInspector();
-    updateButtons();
-    schedulePreview();
-  }
-
-  // ------------------------------------------------------------ capture: playhead, pad, marks
+  // ------------------------------------------------------------ step 2: capture
 
   function renderPlayhead(data) {
     if (!data || !data.ok) {
       el.playhead.textContent = '--:--:--:--';
       el.playState.className = 'play';
-      el.playState.lastElementChild.textContent = data && data.error ? 'no timeline' : 'stopped';
-      el.captureTl.textContent = '';
-      state.playhead = null;
+      el.playState.lastElementChild.textContent = 'stopped';
+      el.captureTl.textContent = data && data.error ? 'Open a timeline in Resolve' : 'No timeline';
       return;
     }
-    state.playhead = data;
     el.playhead.textContent = data.tc;
     el.playState.className = `play${data.playing ? ' on' : ''}`;
     el.playState.lastElementChild.textContent = data.playing ? 'playing' : 'stopped';
@@ -350,22 +298,20 @@
   function applyMarks(result) {
     if (!result) return;
     state.marks = result.marks || [];
-    state.marksInfo = result.info || null;
     renderMarks();
     updateButtons();
-    schedulePreview();
+    schedulePlan();
   }
 
   function markRow(m) {
     const li = document.createElement('li');
     li.className = `mark ${m.kind}`;
     li.title = 'Click to move the playhead here';
-    const range = m.kind === 'cut' ? `${m.tcIn} <span>→</span> ${m.tcOut}` : m.tcIn;
+    const range = m.kind === 'cut' ? `${m.tcIn} <span>→</span> ${m.tcOut}<em>${escapeHtml(m.duration)}</em>` : m.tcIn;
     li.innerHTML =
       `<span class="no">${String(m.index).padStart(2, '0')}</span>` +
       `<span class="range">${range}</span>` +
-      `<span class="dur">${m.kind === 'cut' ? escapeHtml(m.duration) : ''}</span>` +
-      `<button class="del" title="Remove this mark" aria-label="Remove">×</button>`;
+      `<button class="del" title="Remove" aria-label="Remove this mark">×</button>`;
     li.addEventListener('click', () => api.seek(m.absIn).catch((e) => showBanner(e.message)));
     li.querySelector('.del').addEventListener('click', (e) => {
       e.stopPropagation();
@@ -381,17 +327,19 @@
     el.stillsCount.textContent = String(stills.length);
     el.cuts.innerHTML = '';
     el.stills.innerHTML = '';
-    if (!cuts.length) el.cuts.innerHTML = '<li class="none">Hold the pad while the timeline plays.</li>';
+    if (!cuts.length) el.cuts.innerHTML = '<li class="none">None yet. Hold the pad while it plays.</li>';
     else for (const m of cuts) el.cuts.appendChild(markRow(m));
-    if (!stills.length) el.stills.innerHTML = '<li class="none">Tap the pad on a frame you want.</li>';
+    if (!stills.length) el.stills.innerHTML = '<li class="none">None yet. Tap the pad on a frame.</li>';
     else for (const m of stills) el.stills.appendChild(markRow(m));
-
     const cutProfiles = countIncluded('cuts');
     const stillProfiles = countIncluded('stills');
-    const parts = [];
-    if (cuts.length) parts.push(`${cuts.length} cut${cuts.length === 1 ? '' : 's'} × ${cutProfiles} profile${cutProfiles === 1 ? '' : 's'}`);
-    if (stills.length) parts.push(`${stills.length} still${stills.length === 1 ? '' : 's'} × ${stillProfiles} profile${stillProfiles === 1 ? '' : 's'}`);
-    el.captureHint.textContent = parts.length ? parts.join(' · ') : 'Play the timeline in Resolve, then hold or tap. Marks are saved as timeline markers.';
+    const warn = [];
+    if (cuts.length && !cutProfiles) warn.push('Tick a "per cut" deliverable in step 1 to export the cuts.');
+    if (stills.length && !stillProfiles) warn.push('Tick a "per still" deliverable in step 1 to export the stills.');
+    el.captureHint.className = `hint${warn.length ? ' warn' : ''}`;
+    el.captureHint.textContent = warn.length
+      ? warn.join(' ')
+      : 'Play the timeline in Resolve, then hold or tap the pad. Marks are saved as timeline markers, so you can see and delete them in Resolve too.';
   }
 
   function flashPad(kind) {
@@ -473,196 +421,78 @@
     window.addEventListener('blur', () => {
       if (state.pressing) endPress();
     });
-    $('btn-clear-cuts').addEventListener('click', () => {
-      if (!state.marks.some((m) => m.kind === 'cut')) return;
-      if (!window.confirm('Remove all cut markers from this timeline?')) return;
-      api.marksClear('cut').then(applyMarks).catch((e) => showBanner(e.message));
-    });
-    $('btn-clear-stills').addEventListener('click', () => {
-      if (!state.marks.some((m) => m.kind === 'still')) return;
-      if (!window.confirm('Remove all still markers from this timeline?')) return;
-      api.marksClear('still').then(applyMarks).catch((e) => showBanner(e.message));
-    });
-    el.btnExportCuts.addEventListener('click', () => queue(true, ['cuts']));
-    el.btnExportStills.addEventListener('click', () => queue(true, ['stills']));
+    $('btn-clear-cuts').addEventListener('click', () => confirmClear('cut'));
+    $('btn-clear-stills').addEventListener('click', () => confirmClear('still'));
     api.onPlayhead(renderPlayhead);
     api.onMarks(applyMarks);
   }
 
-  // ------------------------------------------------------------ inspector
-
-  function fmtUnit(value, unit) {
-    if (value === undefined || value === null || value === '') return null;
-    return `${escapeHtml(value)}<small>${unit}</small>`;
-  }
-
-  function fmtBool(value) {
-    if (value === undefined || value === null) return null;
-    return value ? 'On' : 'Off';
-  }
-
-  function fmtQuality(q) {
-    if (q === undefined || q === null) return null;
-    if (q === 0 || q === '0') return 'Automatic';
-    if (typeof q === 'number') return `${q}<small>kb/s</small>`;
-    return escapeHtml(q);
-  }
-
-  function section(title, rows) {
-    const body = rows
-      .filter(([, v]) => v !== null && v !== undefined)
-      .map(([k, v, cls]) => `<div class="insp-row"><span class="k">${escapeHtml(k)}</span><span class="v${cls ? ` ${cls}` : ''}">${v}</span></div>`)
-      .join('');
-    if (!body) return '';
-    return `<div class="insp-section"><span class="label">${escapeHtml(title)}</span>${body}</div>`;
-  }
-
-  function extensionFor(format) {
-    const m = String(format || '').toLowerCase().match(/^[a-z0-9]{2,4}/);
-    return m ? m[0] : '';
-  }
-
-  function renderInspector() {
-    const p = state.profiles.find((x) => x.id === state.selectedId);
-    if (!p) {
-      el.inspectorKind.textContent = '';
-      el.inspectorBody.innerHTML = '<div class="insp-empty">Select a deliverable to inspect it.</div>';
+  // A two-step clear: first click arms the link, second click within 4 s clears.
+  const clearArmed = { cut: null, still: null };
+  function confirmClear(kind) {
+    const btn = kind === 'cut' ? $('btn-clear-cuts') : $('btn-clear-stills');
+    if (!state.marks.some((m) => m.kind === kind)) return;
+    if (clearArmed[kind]) {
+      clearTimeout(clearArmed[kind]);
+      clearArmed[kind] = null;
+      btn.textContent = 'clear';
+      api.marksClear(kind).then(applyMarks).catch((e) => showBanner(e.message));
       return;
     }
-    el.inspectorKind.textContent = 'Deliverable';
-    const s = p.settings || {};
-    const target = profileTarget(p);
-    const userDir = state.status && state.status.userDir ? slash(state.status.userDir) : null;
-    const isUser = userDir && p.source && slash(p.source).startsWith(userDir);
-    const example = state.planItems.find((i) => i.profileId === p.id);
-    const ext = extensionFor(p.format);
-    const range = s.SelectAllFrames === false && s.MarkIn != null && s.MarkOut != null ? `${s.MarkIn}–${s.MarkOut}` : null;
-    const marksOfKind = target === 'cuts' ? state.marks.filter((m) => m.kind === 'cut').length : target === 'stills' ? state.marks.filter((m) => m.kind === 'still').length : null;
-
-    const other = Object.entries(s)
-      .filter(([k]) => !HANDLED_SETTINGS.has(k))
-      .map(([k, v]) => [k, escapeHtml(typeof v === 'object' ? JSON.stringify(v) : String(v)), 'mono']);
-
-    el.inspectorBody.innerHTML =
-      `<div class="insp-title">` +
-      `<h3>${escapeHtml(p.name)}</h3>` +
-      `<div class="id"><span>${escapeHtml(p.id)}</span><span class="tag${isUser ? ' user' : ''}">${isUser ? 'User' : 'Bundled'}</span></div>` +
-      (p.description ? `<p class="desc">${escapeHtml(p.description)}</p>` : '') +
-      `</div>` +
-      section('Output', [
-        ['Applies to', TARGET_LABEL[target] + (marksOfKind !== null ? ` <small>${marksOfKind} marked</small>` : '')],
-        ['Container', escapeHtml(p.format), 'mono'],
-        ['Codec', /^(auto|\*|first|default)$/i.test(p.codec) ? 'First available' : escapeHtml(p.codec), /^(auto|\*|first|default)$/i.test(p.codec) ? 'dim' : 'mono'],
-        ['Mode', p.renderMode === 'individual' ? 'Individual clips' : 'Single clip'],
-        ['Preset', p.renderPreset ? escapeHtml(p.renderPreset) : 'None', p.renderPreset ? '' : 'dim'],
-      ]) +
-      section('Frame', [
-        ['Resolution', p.resolution ? `${p.resolution.width} × ${p.resolution.height}` : 'Timeline', p.resolution ? '' : 'dim'],
-        ['Frame rate', p.frameRate != null ? fmtUnit(p.frameRate, 'fps') : 'Timeline', p.frameRate != null ? '' : 'dim'],
-        ['Range', target === 'cuts' ? 'Each cut, in → out' : target === 'stills' ? 'One frame per still' : range || 'Entire timeline', target === 'timeline' && !range ? 'dim' : ''],
-        ['Video', fmtBool(s.ExportVideo === undefined ? true : s.ExportVideo)],
-      ]) +
-      (target === 'stills'
-        ? ''
-        : section('Audio', [
-            ['Export', fmtBool(s.ExportAudio === undefined ? true : s.ExportAudio)],
-            ['Codec', s.AudioCodec ? escapeHtml(s.AudioCodec) : null, 'mono'],
-            ['Bit depth', fmtUnit(s.AudioBitDepth, 'bit')],
-            ['Sample rate', fmtUnit(s.AudioSampleRate, 'Hz')],
-          ])) +
-      section('Quality', [
-        ['Quality', fmtQuality(s.VideoQuality)],
-        ['Profile', s.EncodingProfile ? escapeHtml(s.EncodingProfile) : null],
-        ['Multi-pass', fmtBool(s.MultiPassEncode)],
-        ['Fast start', fmtBool(s.NetworkOptimization)],
-        ['Alpha', fmtBool(s.ExportAlpha)],
-        ['Color space', s.ColorSpaceTag ? escapeHtml(s.ColorSpaceTag) : null],
-        ['Gamma', s.GammaTag ? escapeHtml(s.GammaTag) : null],
-      ]) +
-      section('Naming', [
-        ['Subfolder', p.subfolder ? escapeHtml(p.subfolder) : 'Output folder', p.subfolder ? 'mono' : 'dim'],
-        ['Suffix', p.fileSuffix ? escapeHtml(p.fileSuffix) : 'None', p.fileSuffix ? 'mono' : 'dim'],
-        ['Example', example ? `${escapeHtml(example.fileName)}${ext ? `.${ext}` : ''}` : '—', example ? 'mono' : 'dim'],
-      ]) +
-      section('Other settings', other) +
-      `<div class="insp-actions">` +
-      `<button class="btn small block${state.included.has(p.id) ? '' : ' primary'}" id="insp-toggle">${state.included.has(p.id) ? 'Exclude from batch' : 'Include in batch'}</button>` +
-      `<button class="btn small" id="insp-open" title="${escapeHtml(p.source || '')}">Open JSON</button>` +
-      `</div>`;
-
-    $('insp-toggle').addEventListener('click', () => toggleInclude(p.id));
-    $('insp-open').addEventListener('click', () => api.openProfileFile(p.id).catch((e) => showBanner(e.message)));
+    btn.textContent = 'click again to remove all';
+    clearArmed[kind] = setTimeout(() => {
+      clearArmed[kind] = null;
+      btn.textContent = 'clear';
+    }, 4000);
   }
 
-  // ------------------------------------------------------------ preview tree
+  // ------------------------------------------------------------ step 3: export
 
-  const schedulePreview = debounce(async () => {
+  const schedulePlan = debounce(async () => {
     const req = currentRequest(false);
-    const timelinesN = req.timelines ? req.timelines.length : 1;
-    el.previewSummary.textContent = req.profileIds.length
-      ? `${req.profileIds.length} deliverable${req.profileIds.length === 1 ? '' : 's'} × ${timelinesN} timeline${timelinesN === 1 ? '' : 's'}`
-      : '';
     if (!isConnected() || !req.profileIds.length) {
-      state.planItems = [];
-      el.preview.innerHTML = `<div class="none">${req.profileIds.length ? 'Waiting for Resolve.' : 'Include at least one deliverable.'}</div>`;
-      el.previewCount.textContent = '0';
-      renderInspector();
+      state.plan = { items: [], notes: [] };
+      el.exportSummary.textContent = req.profileIds.length ? '' : 'Tick at least one deliverable in step 1.';
+      updateButtons();
       return;
     }
     try {
-      const { items, notes } = await api.plan(req);
-      state.planItems = items;
-      renderTree(items, notes);
-      el.previewCount.textContent = String(items.length);
+      state.plan = await api.plan(req);
     } catch (err) {
-      state.planItems = [];
-      el.preview.innerHTML = `<div class="err">${escapeHtml(err.message)}</div>`;
-      el.previewCount.textContent = '0';
-    }
-    renderInspector();
-  }, 150);
-
-  function renderTree(items, notes = []) {
-    if (!items.length && !notes.length) {
-      el.preview.innerHTML = '<div class="none">Nothing to create.</div>';
+      state.plan = { items: [], notes: [] };
+      el.exportSummary.textContent = err.message;
+      updateButtons();
       return;
     }
-    const groups = new Map();
-    for (const it of items) {
-      const key = slash(it.targetDir) || '.';
-      if (!groups.has(key)) groups.set(key, []);
-      groups.get(key).push(it);
-    }
-    let html = '';
-    for (const [dir, list] of groups) {
-      html += `<div class="folder">${FOLDER}<span>${escapeHtml(dir)}/</span></div>`;
-      for (const it of list) {
-        const where = it.mark ? `<i>${escapeHtml(it.mark.tcIn)}${it.kind === 'cut' ? ` → ${escapeHtml(it.mark.tcOut)}` : ''}</i>` : '';
-        html += `<div class="file"><b>${escapeHtml(it.fileName)}</b>${where}<span>${escapeHtml(it.timeline)} · ${escapeHtml(it.profileName)}</span></div>`;
-      }
-    }
-    for (const n of notes) html += `<div class="none">${escapeHtml(n.profileName)}: ${escapeHtml(n.message)}</div>`;
-    el.preview.innerHTML = html;
-  }
-
-  // ------------------------------------------------------------ jobs
+    const { items, notes } = state.plan;
+    const finals = items.filter((i) => i.kind === 'final').length;
+    const cuts = items.filter((i) => i.kind === 'cut').length;
+    const stills = items.filter((i) => i.kind === 'still').length;
+    const parts = [];
+    if (finals) parts.push(plural(finals, 'final export'));
+    if (cuts) parts.push(plural(cuts, 'cut'));
+    if (stills) parts.push(plural(stills, 'still'));
+    const where = req.targetDir ? ` → ${slash(req.targetDir)}` : ' → choose a folder in step 1';
+    const noteText = notes.map((n) => n.message.replace(/ on ".*"$/, '')).filter((v, i, a) => a.indexOf(v) === i);
+    el.exportSummary.textContent = (parts.length ? parts.join(' · ') + where : 'Nothing to export yet.') + (noteText.length ? ` · ${noteText.join(' · ')}` : '');
+    updateButtons();
+  }, 150);
 
   function renderJobs() {
     el.jobs.innerHTML = '';
-    el.jobsEmpty.classList.toggle('hidden', state.jobs.length > 0);
     for (const job of state.jobs) {
       const st = state.statuses.get(job.jobId) || { status: 'ready', percent: 0 };
-      const pct = st.status === 'complete' ? 100 : st.percent || 0;
-      const fillClass = st.status === 'complete' ? ' ok' : st.status === 'failed' || st.status === 'cancelled' ? ' bad' : '';
-      const where = job.mark ? ` <i>${escapeHtml(job.mark.tcIn)}${job.kind === 'cut' ? ` → ${escapeHtml(job.mark.tcOut)}` : ''}</i>` : '';
-      const tr = document.createElement('tr');
-      tr.innerHTML =
-        `<td>${escapeHtml(job.timeline)}${where}</td>` +
-        `<td>${escapeHtml(job.profileName)}</td>` +
-        `<td class="file" title="${escapeHtml(slash(job.targetDir))}/${escapeHtml(job.fileName)}">${escapeHtml(job.fileName)}</td>` +
-        `<td><span class="status ${escapeHtml(st.status)}">${escapeHtml(st.status)}</span>${st.error ? `<div class="err-text">${escapeHtml(st.error)}</div>` : ''}</td>` +
-        `<td><div class="jobbar"><div class="bar"><div class="fill${fillClass}" style="width:${pct}%"></div></div><span>${pct}%</span></div></td>`;
-      el.jobs.appendChild(tr);
+      const li = document.createElement('li');
+      li.className = `file ${st.status}`;
+      const where = job.mark ? `<small>${escapeHtml(job.mark.tcIn)}${job.kind === 'cut' ? ` → ${escapeHtml(job.mark.tcOut)}` : ''}</small>` : '';
+      const stateText =
+        st.status === 'complete' ? 'done' : st.status === 'rendering' ? `${st.percent}%` : st.status === 'ready' ? 'waiting' : st.status;
+      li.innerHTML =
+        `<i class="st"></i>` +
+        `<span class="fn" title="${escapeHtml(slash(job.targetDir))}/${escapeHtml(job.fileName)}">${escapeHtml(job.fileName)}${where}</span>` +
+        `<span class="state">${escapeHtml(stateText)}</span>` +
+        (st.error ? `<span class="err">${escapeHtml(st.error)}</span>` : '');
+      el.jobs.appendChild(li);
     }
   }
 
@@ -670,26 +500,29 @@
     if (!summary || !summary.total) {
       el.progressFill.style.width = '0%';
       el.progressLine.className = 'progress-line';
-      el.totalPct.textContent = state.jobs.length ? '0%' : '—';
-      el.totalText.textContent = state.jobs.length ? `${state.jobs.length} queued` : 'Idle';
+      el.progress.classList.toggle('hidden', !state.jobs.length);
+      el.progress.className = `progress${state.jobs.length ? '' : ' hidden'}`;
+      el.totalFill.style.width = '0%';
+      el.totalText.textContent = state.jobs.length ? `${plural(state.jobs.length, 'file')} queued in Resolve` : '';
       return;
     }
+    const cls = summary.done ? (summary.failed ? ' bad' : ' done') : '';
     el.progressFill.style.width = `${summary.percent}%`;
-    el.progressLine.className = `progress-line${summary.done ? (summary.failed ? ' bad' : ' done') : ''}`;
-    el.totalPct.textContent = `${summary.percent}%`;
-    const parts = [];
-    if (summary.rendering) parts.push(`${summary.rendering} rendering`);
-    if (summary.complete) parts.push(`${summary.complete} complete`);
-    if (summary.failed) parts.push(`${summary.failed} failed`);
-    if (summary.cancelled) parts.push(`${summary.cancelled} cancelled`);
-    if (summary.ready) parts.push(`${summary.ready} waiting`);
-    el.totalText.textContent = parts.join(' · ');
+    el.progressLine.className = `progress-line${cls}`;
+    el.progress.className = `progress${cls}`;
+    el.totalFill.style.width = `${summary.percent}%`;
+    const doneN = summary.complete + summary.failed + summary.cancelled;
+    el.totalText.textContent = summary.done
+      ? summary.failed
+        ? `Finished · ${plural(summary.failed, 'file')} failed`
+        : `All ${summary.total} done`
+      : `${summary.percent}% · ${doneN} of ${summary.total} done`;
   }
 
   async function queue(startRender, targets) {
     const req = currentRequest(startRender, targets);
-    if (!req.profileIds.length) return showBanner('Include at least one deliverable.');
-    if (!req.targetDir) return showBanner('Choose an output folder.');
+    if (!req.profileIds.length) return showBanner('Tick at least one deliverable in step 1.');
+    if (!req.targetDir) return showBanner('Choose where to save in step 1.');
     showBanner(null);
     setBusy(true);
     try {
@@ -699,12 +532,12 @@
       state.rendering = rendering;
       renderJobs();
       renderTotal(null);
-      if (jobs.length) el.jobs.closest('.sheet').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
       if (errors.length) {
-        showBanner(`${errors.length} job(s) could not be queued: ${errors.map((e) => `${e.profileName} (${e.message})`).join('; ')}`);
+        showBanner(`${errors.length} file(s) could not be queued: ${errors.map((e) => `${e.profileName} (${e.message})`).join('; ')}`);
       } else if (!jobs.length) {
-        showBanner(notes.length ? notes.map((n) => `${n.profileName}: ${n.message}`).join(' · ') : 'Nothing was queued.', 'info');
+        showBanner(notes.length ? notes.map((n) => n.message).join(' · ') : 'Nothing was queued.', 'info');
       }
+      if (jobs.length) el.progress.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     } catch (err) {
       showBanner(err.message);
     } finally {
@@ -734,63 +567,47 @@
         input.focus();
         input.setSelectionRange(start + c.textContent.length, start + c.textContent.length);
         api.saveSettings({ nameTemplate: input.value }).catch(() => {});
-        schedulePreview();
+        schedulePlan();
       });
     });
   }
 
   function wire() {
     $('btn-refresh').addEventListener('click', refreshStatus);
-    $('btn-all').addEventListener('click', () => {
-      state.included = new Set(state.profiles.map((p) => p.id));
-      renderProfiles();
-      renderInspector();
-      updateButtons();
-      schedulePreview();
-    });
-    $('btn-none').addEventListener('click', () => {
-      state.included = new Set();
-      renderProfiles();
-      renderInspector();
-      updateButtons();
-      schedulePreview();
-    });
-    $('btn-reload-profiles').addEventListener('click', async () => {
-      await loadProfiles({ selectedProfiles: [...state.included] });
-      updateButtons();
-      schedulePreview();
-    });
-    $('btn-profiles-folder').addEventListener('click', () => api.openProfilesFolder().catch((e) => showBanner(e.message)));
-    $('btn-caps').addEventListener('click', () => {
-      el.drawer.classList.add('open');
-      api.capabilities().catch((e) => showBanner(e.message));
-    });
     $('btn-browse').addEventListener('click', async () => {
       const dir = await api.pickFolder(el.targetDir.value.trim()).catch((e) => showBanner(e.message));
       if (dir) {
         el.targetDir.value = dir;
         api.saveSettings({ targetDir: dir }).catch(() => {});
         updateButtons();
-        schedulePreview();
+        schedulePlan();
       }
     });
+    el.targetDir.addEventListener('input', () => {
+      updateButtons();
+      schedulePlan();
+    });
+    el.targetDir.addEventListener('change', () => api.saveSettings({ targetDir: el.targetDir.value.trim() }).catch(() => {}));
+    el.btnGo.addEventListener('click', () => queue(true));
+    el.btnStop.addEventListener('click', stop);
+    el.btnExportCuts.addEventListener('click', () => queue(true, ['cuts']));
+    el.btnExportStills.addEventListener('click', () => queue(true, ['stills']));
+    el.btnQueue.addEventListener('click', () => queue(false));
     $('btn-open-out').addEventListener('click', () => {
       const dir = el.targetDir.value.trim();
       if (dir) api.openFolder(dir).catch((e) => showBanner(e.message));
     });
-    el.targetDir.addEventListener('input', () => {
+    $('btn-profiles-folder').addEventListener('click', () => api.openProfilesFolder().catch((e) => showBanner(e.message)));
+    $('btn-reload-profiles').addEventListener('click', async () => {
+      await loadProfiles({ selectedProfiles: [...state.included] });
       updateButtons();
-      schedulePreview();
+      schedulePlan();
     });
-    el.targetDir.addEventListener('change', () => api.saveSettings({ targetDir: el.targetDir.value.trim() }).catch(() => {}));
-    el.nameTemplate.addEventListener('input', schedulePreview);
+    $('btn-caps').addEventListener('click', () => api.capabilities().catch((e) => showBanner(e.message)));
+    el.nameTemplate.addEventListener('input', schedulePlan);
     el.nameTemplate.addEventListener('change', () => api.saveSettings({ nameTemplate: el.nameTemplate.value.trim() }).catch(() => {}));
     el.optStart.addEventListener('change', () => api.saveSettings({ startRender: el.optStart.checked }).catch(() => {}));
     el.optClear.addEventListener('change', () => api.saveSettings({ clearExisting: el.optClear.checked }).catch(() => {}));
-    el.btnGo.addEventListener('click', () => queue(true));
-    el.btnQueue.addEventListener('click', () => queue(el.optStart.checked));
-    el.btnStop.addEventListener('click', stop);
-    $('drawer-toggle').addEventListener('click', () => el.drawer.classList.toggle('open'));
     document.addEventListener('keydown', (e) => {
       if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && !el.btnGo.disabled && !state.rendering) queue(true);
     });
@@ -825,7 +642,6 @@
     el.optStart.checked = settings.startRender !== false;
     const history = await api.logHistory().catch(() => []);
     el.log.textContent = history.join('\n');
-    if (history.length) el.logLast.textContent = history[history.length - 1].replace(/^\[[^\]]*\]\s*/, '');
     renderMarks();
     await loadProfiles(settings);
     await refreshStatus();

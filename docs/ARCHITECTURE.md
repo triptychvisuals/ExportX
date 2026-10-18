@@ -40,7 +40,9 @@ Resolve timeline markers = where cuts and stills live (customData exportx:cut / 
 | --- | --- |
 | `main.js` | Electron main. Loads the native binding, owns the `ResolveBridge`/`BatchExporter`, exposes IPC handlers, polls the playhead (150 ms) and marks (2 s) and pushes them to the window, turns a press into a mark, persists settings in `~/.exportx/settings.json`, runs the render monitor. |
 | `preload.js` | The only bridge between renderer and main. Exposes `window.exportx` with promise-returning calls and event subscriptions. Renderer has no Node access. |
-| `ui/renderer.js` | Vanilla DOM UI: timeline strip, deliverables rail grouped by target, capture sheet (pad, playhead, mark lists), output sheet, "will create" tree, job table, inspector, log drawer. |
+| `ui/renderer.js` | Vanilla DOM UI in three steps: deliverable checklist + folder, capture (playhead, pad, mark lists), export (one button, cuts/stills buttons, summary, progress, file list), plus a "More options" fold (file-name pattern, timelines, switches, utilities, log). |
+| `ui/mock-api.js` | Browser-side fake of `window.exportx` (playing timeline, markers, self-progressing render queue) for `docs/preview.html` and screenshots. |
+| `scripts/build-preview.js` | Bundles the panel + mock into one HTML file (`docs/preview.html`) anyone can open. |
 | `src/resolve.js` | `ResolveBridge`: awaits every Resolve call, resolves format/codec ids loosely (`auto` = first), applies a profile to Deliver settings, adds/starts/polls jobs, reads timeline info and the playhead, adds/deletes marker-backed marks. No Electron imports, so it is unit-testable. |
 | `src/batch.js` | `BatchExporter` and the pure `expandItems()`: profiles × timelines × marks → items with ranges and filenames; per-item error isolation; restores the original timeline; `waitForCompletion` polling with stop detection. |
 | `src/marks.js` | Mark kinds (colour, customData), `marksFromMarkers()` (markers → ordered, numbered marks with timecodes), `classifyPress()` (tap vs hold). |
