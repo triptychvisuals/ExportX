@@ -16,7 +16,11 @@ test('bundled profiles load and are valid', () => {
   assert.ok(list.length >= 3, 'expected at least three bundled profiles');
   const ids = list.map((p) => p.id);
   assert.equal(new Set(ids).size, ids.length, 'profile ids must be unique');
-  assert.ok(ids.includes('prores-master'));
+  assert.ok(ids.includes('final-prores-master'));
+  assert.ok(ids.includes('cuts-social-1080'));
+  assert.ok(ids.includes('stills-tiff'));
+  const targets = new Set(list.map((p) => p.target));
+  assert.deepEqual([...targets].sort(), ['cuts', 'stills', 'timeline']);
   for (const p of list) {
     assert.ok(p.format && p.codec, `${p.id} needs format and codec`);
   }
@@ -26,10 +30,10 @@ test('user profiles override bundled ones by id', () => {
   const dir = tmpDir();
   fs.writeFileSync(
     path.join(dir, 'mine.json'),
-    JSON.stringify({ id: 'prores-master', name: 'My Master', format: 'mov', codec: 'ProRes4444' }),
+    JSON.stringify({ id: 'final-prores-master', name: 'My Master', format: 'mov', codec: 'ProRes4444' }),
   );
   const list = profiles.loadProfiles([profiles.bundledProfilesDir(), dir]);
-  const master = list.find((p) => p.id === 'prores-master');
+  const master = list.find((p) => p.id === 'final-prores-master');
   assert.equal(master.name, 'My Master');
   assert.equal(master.codec, 'ProRes4444');
 });
@@ -57,6 +61,9 @@ test('rejects malformed profiles with a useful message', () => {
     () => profiles.validateProfile({ id: 'x', name: 'X', format: 'mp4', codec: 'H264', resolution: { width: '1920' } }),
     /resolution/,
   );
+  assert.throws(() => profiles.validateProfile({ id: 'x', name: 'X', format: 'tif', codec: 'auto', target: 'frames' }), /target must be/);
+  assert.equal(profiles.validateProfile({ id: 'x', name: 'X', format: 'tif', codec: 'auto', target: 'stills' }).target, 'stills');
+  assert.equal(profiles.validateProfile({ id: 'y', name: 'Y', format: 'mp4', codec: 'H264' }).target, 'timeline');
 });
 
 test('loadProfilesSafe reports broken files without dropping good ones', () => {

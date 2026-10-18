@@ -10,6 +10,11 @@
  * src/batch.js does the batching. The renderer (ui/) talks to this process over
  * IPC only, via preload.js.
  *
+ * Capture: while the timeline plays in Resolve, the panel's pad turns a hold
+ * into a cut mark and a tap into a still mark. Marks are Resolve timeline
+ * markers (see src/marks.js). This process polls the playhead a few times a
+ * second and pushes it to the window.
+ *
  * Set EXPORTX_MOCK=1 to run the UI against test/helpers/mock-resolve.js outside Resolve.
  */
 
@@ -18,7 +23,8 @@ const fs = require('fs');
 const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
 
 const { ResolveBridge } = require('./src/resolve');
-const { BatchExporter, DEFAULT_TEMPLATE } = require('./src/batch');
+const { BatchExporter, DEFAULT_TEMPLATE, TARGETS } = require('./src/batch');
+const { classifyPress } = require('./src/marks');
 const profilesLib = require('./src/profiles');
 
 const PLUGIN_ID = 'com.triptychvisuals.exportx';
@@ -31,7 +37,11 @@ const DEFAULT_SETTINGS = {
   selectedProfiles: null,
   clearExisting: false,
   startRender: true,
+  minCutSeconds: 0.3,
 };
+const PLAYHEAD_INTERVAL_MS = 150;
+const MARKS_INTERVAL_MS = 2000;
+const INFO_INTERVAL_MS = 2000;
 
 const state = {
   win: null,
@@ -42,6 +52,8 @@ const state = {
   jobs: [],
   monitor: null,
   logBuffer: [],
+  press: null,
+  playhead: { timer: null, inFlight: false, info: null, infoAt: 0, last: null, marksAt: 0, marksKey: null },
 };
 
 // ---------------------------------------------------------------- helpers
@@ -83,6 +95,11 @@ function loadProfiles() {
   return { profiles, errors, dirs: profilesLib.defaultProfileDirs() };
 }
 
+function requireBridge() {
+  if (!state.bridge) throw new Error(state.initError || 'Not connected to DaVinci Resolve');
+  return state.bridge;
+}
+
 function requireExporter() {
   if (!state.exporter) throw new Error(state.initError || 'Not connected to DaVinci Resolve');
   return state.exporter;
@@ -106,7 +123,17 @@ function handle(channel, fn) {
 async function connectResolve() {
   if (MOCK) {
     const { createMockResolve } = require('./test/helpers/mock-resolve');
-    state.bridge = new ResolveBridge(createMockResolve({ progressStep: 7 }));
+    const resolve = createMockResolve({
+      name: 'Mock Project',
+      timelines: [{ name: 'Main Edit', fps: 24 }, 'Trailer 30s', 'Social Cut'],
+      progressStep: 7,
+    });
+    // let the mock playhead "play" so the capture pad can be tried
+    setInterval(() => {
+      const tl = resolve.project.GetCurrentTimeline();
+      if (tl) tl.playheadAbs = tl.playheadAbs + 4 > tl.endFrame ? tl.startFrame : tl.playheadAbs + 4;
+    }, PLAYHEAD_INTERVAL_MS);
+    state.bridge = new ResolveBridge(resolve);
     log('Mock mode: not connected to a real Resolve instance');
   } else {
     const modPath = path.join(__dirname, 'WorkflowIntegration.node');
@@ -149,10 +176,12 @@ async function connectResolve() {
   } catch (err) {
     log(`Connected, but could not read version: ${err.message}`);
   }
+  startPlayheadPolling();
 }
 
 function cleanup() {
   stopMonitor();
+  stopPlayheadPolling();
   if (state.wi) {
     try {
       state.wi.CleanUp();
@@ -160,6 +189,64 @@ function cleanup() {
       console.error('[ExportX] CleanUp failed:', err);
     }
     state.wi = null;
+  }
+}
+
+// ---------------------------------------------------------------- playhead + marks polling
+
+function startPlayheadPolling() {
+  if (state.playhead.timer || !state.bridge) return;
+  state.playhead.timer = setInterval(pollPlayhead, PLAYHEAD_INTERVAL_MS);
+}
+
+function stopPlayheadPolling() {
+  if (state.playhead.timer) clearInterval(state.playhead.timer);
+  state.playhead.timer = null;
+}
+
+async function currentInfo(force = false) {
+  const ph = state.playhead;
+  const now = Date.now();
+  const tl = await state.bridge.currentTimeline();
+  const name = String(await tl.GetName());
+  if (force || !ph.info || ph.info.name !== name || now - ph.infoAt > INFO_INTERVAL_MS) {
+    ph.info = await state.bridge.timelineInfo(tl);
+    ph.infoAt = now;
+  }
+  return ph.info;
+}
+
+function marksKey(marks) {
+  return marks.map((m) => `${m.id}:${m.relOut}`).join('|');
+}
+
+function broadcastMarks(result) {
+  state.playhead.marksKey = marksKey(result.marks);
+  state.playhead.marksAt = Date.now();
+  send('exportx:marks', { info: result.info, marks: result.marks });
+}
+
+async function pollPlayhead() {
+  const ph = state.playhead;
+  if (ph.inFlight || !state.bridge || !state.win || state.win.isDestroyed()) return;
+  ph.inFlight = true;
+  try {
+    const info = await currentInfo();
+    const pos = await state.bridge.playhead(info);
+    const playing = ph.last ? pos.absFrame !== ph.last.absFrame && ph.last.timeline === pos.timeline : false;
+    ph.last = pos;
+    send('exportx:playhead', { ok: true, ...pos, playing, info });
+    if (Date.now() - ph.marksAt > MARKS_INTERVAL_MS) {
+      const result = await state.bridge.marks();
+      ph.marksAt = Date.now();
+      const key = marksKey(result.marks);
+      if (key !== ph.marksKey) broadcastMarks(result);
+    }
+  } catch (err) {
+    ph.last = null;
+    send('exportx:playhead', { ok: false, error: err.message });
+  } finally {
+    ph.inFlight = false;
   }
 }
 
@@ -201,7 +288,7 @@ async function startRender(jobIds) {
   return true;
 }
 
-// ---------------------------------------------------------------- IPC
+// ---------------------------------------------------------------- IPC: status, profiles, folders
 
 handle('exportx:status', async () => {
   const base = { connected: Boolean(state.bridge), mock: MOCK, error: state.initError, userDir: USER_DIR };
@@ -220,7 +307,7 @@ handle('exportx:status', async () => {
 handle('exportx:profiles', async () => loadProfiles());
 
 handle('exportx:capabilities', async () => {
-  const caps = await requireExporter().bridge.capabilities();
+  const caps = await requireBridge().capabilities();
   log(`Render presets: ${caps.presets.join(', ') || 'none'}`);
   for (const f of caps.formats) {
     log(`Format ${f.id} (${f.description}): ${f.codecs.map((c) => `${c.id} [${c.description}]`).join(', ')}`);
@@ -262,6 +349,83 @@ handle('exportx:open-profiles-folder', async () => {
   return dir;
 });
 
+handle('exportx:open-profile-file', async (profileId) => {
+  const { profiles } = loadProfiles();
+  const profile = profiles.find((p) => p.id === profileId);
+  if (!profile || !profile.source) throw new Error(`Profile "${profileId}" has no source file`);
+  const problem = await shell.openPath(profile.source);
+  if (problem) shell.showItemInFolder(profile.source);
+  return profile.source;
+});
+
+// ---------------------------------------------------------------- IPC: capture (marks)
+
+handle('exportx:marks', async () => {
+  const result = await requireBridge().marks();
+  broadcastMarks(result);
+  return result;
+});
+
+handle('exportx:mark-begin', async () => {
+  const bridge = requireBridge();
+  const info = await currentInfo();
+  const pos = await bridge.playhead(info);
+  state.press = { absIn: pos.absFrame, tc: pos.tc, fps: info.fps, startedAt: Date.now(), timeline: info.name };
+  return state.press;
+});
+
+handle('exportx:mark-cancel', async () => {
+  state.press = null;
+  return true;
+});
+
+handle('exportx:mark-end', async () => {
+  const bridge = requireBridge();
+  const press = state.press;
+  state.press = null;
+  if (!press) throw new Error('No press in progress');
+  const info = await currentInfo();
+  if (info.name !== press.timeline) throw new Error('The timeline changed during the press; mark discarded');
+  const pos = await bridge.playhead(info);
+  const { minCutSeconds } = readSettings();
+  const press2 = classifyPress({ absIn: press.absIn, absOut: pos.absFrame, fps: info.fps, minCutSeconds });
+  const result = await bridge.addMark(press2);
+  broadcastMarks(result);
+  const a = result.added;
+  log(a ? `Marked ${a.kind} ${a.index}: ${a.tcIn}${a.kind === 'cut' ? ` → ${a.tcOut} (${a.duration})` : ''}` : `Marked ${press2.kind}`);
+  return result;
+});
+
+handle('exportx:mark-still', async () => {
+  const bridge = requireBridge();
+  const info = await currentInfo();
+  const pos = await bridge.playhead(info);
+  const result = await bridge.addMark({ kind: 'still', absIn: pos.absFrame, absOut: pos.absFrame });
+  broadcastMarks(result);
+  if (result.added) log(`Marked still ${result.added.index}: ${result.added.tcIn}`);
+  return result;
+});
+
+handle('exportx:mark-delete', async (relIn) => {
+  const result = await requireBridge().deleteMark(Number(relIn));
+  broadcastMarks(result);
+  return result;
+});
+
+handle('exportx:marks-clear', async (kind) => {
+  const result = await requireBridge().clearMarks(kind || null);
+  broadcastMarks(result);
+  log(kind ? `Cleared all ${kind} marks` : 'Cleared all marks');
+  return result;
+});
+
+handle('exportx:seek', async (absFrame) => {
+  const info = await currentInfo();
+  return requireBridge().seek(Number(absFrame), info);
+});
+
+// ---------------------------------------------------------------- IPC: plan, queue, render
+
 function selectProfiles(ids) {
   const { profiles } = loadProfiles();
   const wanted = new Set(ids || []);
@@ -273,8 +437,10 @@ function selectProfiles(ids) {
 
 function toRequest(req) {
   const r = req || {};
+  const targets = Array.isArray(r.targets) ? r.targets.filter((t) => TARGETS.includes(t)) : [];
   return {
     profiles: selectProfiles(r.profileIds),
+    targets: targets.length ? targets : TARGETS,
     targetDir: r.targetDir || '',
     nameTemplate: r.nameTemplate || DEFAULT_TEMPLATE,
     timelines: Array.isArray(r.timelines) && r.timelines.length ? r.timelines : null,
@@ -287,7 +453,7 @@ handle('exportx:plan', async (req) => requireExporter().plan(toRequest(req)));
 handle('exportx:queue', async (req) => {
   const exporter = requireExporter();
   const request = toRequest(req);
-  const { jobs, errors } = await exporter.queue(request);
+  const { jobs, errors, notes } = await exporter.queue(request);
   state.jobs = jobs;
   writeSettings({
     targetDir: request.targetDir,
@@ -301,7 +467,7 @@ handle('exportx:queue', async (req) => {
     await startRender(jobs.map((j) => j.jobId));
     rendering = true;
   }
-  return { jobs, errors, rendering };
+  return { jobs, errors, notes, rendering };
 });
 
 handle('exportx:render', async (jobIds) => {
@@ -327,12 +493,12 @@ handle('exportx:log-history', async () => [...state.logBuffer]);
 
 function createWindow() {
   state.win = new BrowserWindow({
-    width: 960,
-    height: 760,
-    minWidth: 760,
-    minHeight: 540,
+    width: 1200,
+    height: 860,
+    minWidth: 900,
+    minHeight: 620,
     title: 'ExportX',
-    backgroundColor: '#1a1a1c',
+    backgroundColor: '#0f0f0f',
     autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),

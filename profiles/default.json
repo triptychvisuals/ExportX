@@ -1,9 +1,10 @@
 {
   "profiles": [
     {
-      "id": "prores-master",
-      "name": "ProRes 422 HQ Master",
-      "description": "Full-resolution mezzanine master at the timeline's resolution and frame rate.",
+      "id": "final-prores-master",
+      "name": "Final · ProRes 422 HQ Master",
+      "description": "Full-resolution mezzanine master of the whole timeline, at the timeline's resolution and frame rate.",
+      "target": "timeline",
       "format": "mov",
       "codec": "ProRes422HQ",
       "renderMode": "single",
@@ -16,12 +17,35 @@
       },
       "subfolder": "01_Masters",
       "fileSuffix": "_MASTER",
-      "tags": ["master", "archive"]
+      "tags": ["final", "master"]
     },
     {
-      "id": "h264-web",
-      "name": "H.264 Web (1080p)",
-      "description": "1920x1080 MP4 for client delivery, YouTube and Vimeo.",
+      "id": "final-4k-h265",
+      "name": "Final · 4K H.265",
+      "description": "3840x2160 HEVC MP4 of the whole timeline for high-quality web and OTT delivery.",
+      "target": "timeline",
+      "format": "mp4",
+      "codec": "H265",
+      "renderMode": "single",
+      "resolution": { "width": 3840, "height": 2160 },
+      "settings": {
+        "ExportVideo": true,
+        "ExportAudio": true,
+        "VideoQuality": "High",
+        "AudioCodec": "aac",
+        "AudioBitDepth": 16,
+        "AudioSampleRate": 48000,
+        "NetworkOptimization": true
+      },
+      "subfolder": "02_Final",
+      "fileSuffix": "_4K",
+      "tags": ["final", "4k"]
+    },
+    {
+      "id": "final-1080-h264",
+      "name": "Final · 1080p H.264",
+      "description": "1920x1080 MP4 of the whole timeline for client review, YouTube and Vimeo.",
+      "target": "timeline",
       "format": "mp4",
       "codec": "H264",
       "renderMode": "single",
@@ -35,18 +59,41 @@
         "AudioSampleRate": 48000,
         "NetworkOptimization": true
       },
-      "subfolder": "02_Web",
-      "fileSuffix": "_WEB",
-      "tags": ["web", "client"]
+      "subfolder": "02_Final",
+      "fileSuffix": "_1080",
+      "tags": ["final", "web"]
     },
     {
-      "id": "h265-uhd",
-      "name": "H.265 UHD (2160p)",
-      "description": "3840x2160 HEVC MP4 for high-quality web and OTT uploads.",
+      "id": "cuts-social-1080",
+      "name": "Cuts · Social 1080p",
+      "description": "One 1920x1080 H.264 MP4 per cut you marked, for feeds and messaging.",
+      "target": "cuts",
       "format": "mp4",
-      "codec": "H265",
+      "codec": "H264",
       "renderMode": "single",
-      "resolution": { "width": 3840, "height": 2160 },
+      "resolution": { "width": 1920, "height": 1080 },
+      "settings": {
+        "ExportVideo": true,
+        "ExportAudio": true,
+        "VideoQuality": "High",
+        "AudioCodec": "aac",
+        "AudioBitDepth": 16,
+        "AudioSampleRate": 48000,
+        "NetworkOptimization": true
+      },
+      "subfolder": "04_Social",
+      "fileSuffix": "",
+      "tags": ["social", "cuts"]
+    },
+    {
+      "id": "cuts-social-vertical",
+      "name": "Cuts · Social 9:16",
+      "description": "One 1080x1920 H.264 MP4 per cut for Reels, TikTok and Shorts. Best from a vertical timeline; a 16:9 timeline is scaled per the project's image scaling setting.",
+      "target": "cuts",
+      "format": "mp4",
+      "codec": "H264",
+      "renderMode": "single",
+      "resolution": { "width": 1080, "height": 1920 },
       "settings": {
         "ExportVideo": true,
         "ExportAudio": true,
@@ -55,15 +102,47 @@
         "AudioBitDepth": 16,
         "AudioSampleRate": 48000
       },
-      "subfolder": "02_Web",
-      "fileSuffix": "_UHD",
+      "subfolder": "04_Social/9x16",
+      "fileSuffix": "_9x16",
       "enabledByDefault": false,
-      "tags": ["web", "uhd"]
+      "tags": ["social", "cuts"]
+    },
+    {
+      "id": "stills-tiff",
+      "name": "Stills · TIFF",
+      "description": "One full-resolution TIFF per still you marked, rendered through the Deliver engine. Resolve appends the frame number to the filename.",
+      "target": "stills",
+      "format": "tif",
+      "codec": "auto",
+      "renderMode": "single",
+      "settings": {
+        "ExportVideo": true
+      },
+      "subfolder": "06_Stills",
+      "fileSuffix": "",
+      "tags": ["stills"]
+    },
+    {
+      "id": "stills-jpeg",
+      "name": "Stills · JPEG",
+      "description": "One JPEG per still you marked, for quick sharing.",
+      "target": "stills",
+      "format": "jpg",
+      "codec": "auto",
+      "renderMode": "single",
+      "settings": {
+        "ExportVideo": true
+      },
+      "subfolder": "06_Stills/JPEG",
+      "fileSuffix": "",
+      "enabledByDefault": false,
+      "tags": ["stills"]
     },
     {
       "id": "review-proxy",
-      "name": "Review Proxy (720p)",
-      "description": "Small 1280x720 H.264 for quick review links and messaging apps.",
+      "name": "Review proxy · 720p",
+      "description": "Small 1280x720 H.264 of the whole timeline for quick review links.",
+      "target": "timeline",
       "format": "mp4",
       "codec": "H264",
       "renderMode": "single",
@@ -79,33 +158,14 @@
       },
       "subfolder": "03_Review",
       "fileSuffix": "_REVIEW",
+      "enabledByDefault": false,
       "tags": ["review"]
     },
     {
-      "id": "social-vertical",
-      "name": "Social Vertical (1080x1920)",
-      "description": "9:16 MP4 for Reels, TikTok and Shorts. Use with a vertical timeline; a 16:9 timeline will be scaled per the project's image scaling setting.",
-      "format": "mp4",
-      "codec": "H264",
-      "renderMode": "single",
-      "resolution": { "width": 1080, "height": 1920 },
-      "settings": {
-        "ExportVideo": true,
-        "ExportAudio": true,
-        "VideoQuality": "High",
-        "AudioCodec": "aac",
-        "AudioBitDepth": 16,
-        "AudioSampleRate": 48000
-      },
-      "subfolder": "04_Social",
-      "fileSuffix": "_9x16",
-      "enabledByDefault": false,
-      "tags": ["social"]
-    },
-    {
-      "id": "stems-individual-clips",
-      "name": "Individual Clips (ProRes 422)",
+      "id": "clips-prores",
+      "name": "Individual clips · ProRes 422",
       "description": "One ProRes 422 file per timeline clip, for handoff to VFX or re-edits.",
+      "target": "timeline",
       "format": "mov",
       "codec": "ProRes422",
       "renderMode": "individual",

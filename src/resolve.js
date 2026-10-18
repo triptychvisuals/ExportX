@@ -10,14 +10,15 @@
  * so this module works either way. The same wrapper also runs against the
  * mock in test/helpers/mock-resolve.js.
  *
- * Render-related API surface used here (Project object):
- *   GetRenderPresetList / LoadRenderPreset
- *   GetRenderFormats / GetRenderCodecs / SetCurrentRenderFormatAndCodec
- *   SetCurrentRenderMode / SetRenderSettings / AddRenderJob
- *   GetRenderJobList / GetRenderJobStatus / DeleteRenderJob / DeleteAllRenderJobs
- *   StartRendering / StopRendering / IsRenderingInProgress
- * See docs/RESOLVE_API.md.
+ * API surface used (see docs/RESOLVE_API.md):
+ *   Project:  render presets/formats/codecs, SetRenderSettings, AddRenderJob,
+ *             StartRendering, StopRendering, GetRenderJobStatus, timelines
+ *   Timeline: GetStartFrame/GetEndFrame, GetSetting, GetCurrentTimecode,
+ *             SetCurrentTimecode, GetMarkers, AddMarker, DeleteMarkerAtFrame
  */
+
+const { parseFps, tcToFrames, framesToTc, isDropFrameTimecode } = require('./timecode');
+const { KINDS, marksFromMarkers } = require('./marks');
 
 class ResolveError extends Error {
   constructor(message, details) {
@@ -37,6 +38,8 @@ const STATUS_MAP = {
   cancelled: 'cancelled',
   canceled: 'cancelled',
 };
+
+const AUTO_CODEC = /^(auto|\*|first|default)$/i;
 
 function normKey(value) {
   return String(value ?? '')
@@ -78,7 +81,7 @@ function normalizeJobStatus(jobId, raw) {
 
 /**
  * Turn a profile plus per-run options into the dictionary that
- * Project.SetRenderSettings() expects.
+ * Project.SetRenderSettings() expects. `opts.range` holds absolute frames.
  */
 function buildRenderSettings(profile, opts = {}) {
   const settings = { ...(profile.settings || {}) };
@@ -97,7 +100,8 @@ function buildRenderSettings(profile, opts = {}) {
     settings.SelectAllFrames = true;
   }
   if (settings.ExportVideo === undefined) settings.ExportVideo = true;
-  if (settings.ExportAudio === undefined) settings.ExportAudio = true;
+  if (profile.target === 'stills') settings.ExportAudio = false;
+  else if (settings.ExportAudio === undefined) settings.ExportAudio = true;
   return settings;
 }
 
@@ -106,6 +110,8 @@ class ResolveBridge {
     if (!resolve) throw new ResolveError('No Resolve scripting object was provided');
     this.resolve = resolve;
   }
+
+  // ------------------------------------------------------------ project
 
   async info() {
     const product = await this.resolve.GetProductName();
@@ -131,6 +137,8 @@ class ResolveBridge {
     return String(await project.GetName());
   }
 
+  // ------------------------------------------------------------ timelines
+
   async timelines() {
     const project = await this.project();
     const count = Number(await project.GetTimelineCount()) || 0;
@@ -146,20 +154,112 @@ class ResolveBridge {
     return { current: currentName, list };
   }
 
-  async setCurrentTimeline(name) {
+  async timelineByName(name) {
     const project = await this.project();
     const count = Number(await project.GetTimelineCount()) || 0;
     for (let i = 1; i <= count; i += 1) {
       const tl = await project.GetTimelineByIndex(i);
-      if (!tl) continue;
-      if (String(await tl.GetName()) === name) {
-        const ok = await project.SetCurrentTimeline(tl);
-        if (!ok) throw new ResolveError(`Resolve refused to switch to timeline "${name}"`);
-        return tl;
-      }
+      if (tl && String(await tl.GetName()) === name) return tl;
     }
     throw new ResolveError(`Timeline "${name}" was not found in the current project`);
   }
+
+  async setCurrentTimeline(name) {
+    const project = await this.project();
+    const tl = await this.timelineByName(name);
+    const ok = await project.SetCurrentTimeline(tl);
+    if (!ok) throw new ResolveError(`Resolve refused to switch to timeline "${name}"`);
+    return tl;
+  }
+
+  async currentTimeline() {
+    const project = await this.project();
+    const tl = await project.GetCurrentTimeline();
+    if (!tl) throw new ResolveError('No timeline is open in Resolve');
+    return tl;
+  }
+
+  /** Name, frame range and frame rate of a timeline (default: the current one). */
+  async timelineInfo(tl) {
+    const timeline = tl || (await this.currentTimeline());
+    const name = String(await timeline.GetName());
+    const startFrame = Number(await timeline.GetStartFrame()) || 0;
+    const endFrame = Number(await timeline.GetEndFrame()) || startFrame;
+    const fps = parseFps(await timeline.GetSetting('timelineFrameRate'));
+    let dropFrame = false;
+    try {
+      dropFrame = String(await timeline.GetSetting('timelineDropFrameTimecode')) === '1';
+    } catch (_err) {
+      dropFrame = false;
+    }
+    return { name, startFrame, endFrame, fps, dropFrame, frames: endFrame - startFrame + 1 };
+  }
+
+  async playhead(info) {
+    const tl = await this.currentTimeline();
+    const tlInfo = info || (await this.timelineInfo(tl));
+    const tc = String(await tl.GetCurrentTimecode());
+    const dropFrame = tlInfo.dropFrame || isDropFrameTimecode(tc);
+    const absFrame = tcToFrames(tc, tlInfo.fps, dropFrame);
+    return { tc, absFrame, relFrame: absFrame - tlInfo.startFrame, timeline: tlInfo.name, fps: tlInfo.fps };
+  }
+
+  async seek(absFrame, info) {
+    const tl = await this.currentTimeline();
+    const tlInfo = info || (await this.timelineInfo(tl));
+    const tc = framesToTc(absFrame, tlInfo.fps, tlInfo.dropFrame);
+    const ok = await tl.SetCurrentTimecode(tc);
+    if (!ok) throw new ResolveError(`Resolve refused to move the playhead to ${tc}`);
+    return tc;
+  }
+
+  // ------------------------------------------------------------ marks (timeline markers)
+
+  async marks(tl) {
+    const timeline = tl || (await this.currentTimeline());
+    const info = await this.timelineInfo(timeline);
+    const markers = (await timeline.GetMarkers()) || {};
+    return { info, marks: marksFromMarkers(markers, info) };
+  }
+
+  async marksForTimeline(name) {
+    return this.marks(await this.timelineByName(name));
+  }
+
+  async addMark({ kind, absIn, absOut }) {
+    const def = KINDS[kind];
+    if (!def) throw new ResolveError(`Unknown mark kind "${kind}"`);
+    const tl = await this.currentTimeline();
+    const info = await this.timelineInfo(tl);
+    const relIn = Math.max(0, absIn - info.startFrame);
+    const duration = kind === 'still' ? 1 : Math.max(1, absOut - absIn + 1);
+    const before = await this.marks(tl);
+    const n = before.marks.filter((m) => m.kind === kind).length + 1;
+    const ok = await tl.AddMarker(relIn, def.color, `${def.label} ${n}`, 'Marked with ExportX', duration, def.customData);
+    if (!ok) {
+      throw new ResolveError(`Resolve refused a marker at ${framesToTc(absIn, info.fps, info.dropFrame)} (is there already a marker on that frame?)`);
+    }
+    const after = await this.marks(tl);
+    const added = after.marks.find((m) => m.kind === kind && m.relIn === relIn) || null;
+    return { ...after, added };
+  }
+
+  async deleteMark(relIn) {
+    const tl = await this.currentTimeline();
+    await tl.DeleteMarkerAtFrame(Number(relIn));
+    return this.marks(tl);
+  }
+
+  async clearMarks(kind) {
+    const tl = await this.currentTimeline();
+    const { marks } = await this.marks(tl);
+    for (const m of marks) {
+      if (!kind || m.kind === kind) await tl.DeleteMarkerAtFrame(m.relIn);
+    }
+    return this.marks(tl);
+  }
+
+  // ------------------------------------------------------------ render settings
 
   async renderPresets() {
     const project = await this.project();
@@ -205,6 +305,11 @@ class ResolveBridge {
 
   async resolveCodec(formatId, wanted) {
     const codecs = await this.renderCodecs(formatId);
+    if (AUTO_CODEC.test(String(wanted))) {
+      const [description, id] = Object.entries(codecs)[0] || [];
+      if (!id) throw new ResolveError(`Format "${formatId}" offers no codecs`);
+      return { description, id };
+    }
     const hit = matchEntry(codecs, wanted);
     if (!hit) {
       throw new ResolveError(
@@ -248,6 +353,8 @@ class ResolveBridge {
     }
     return { settings, format, codec };
   }
+
+  // ------------------------------------------------------------ render queue
 
   async addRenderJob() {
     const project = await this.project();

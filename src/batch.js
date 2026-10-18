@@ -1,16 +1,24 @@
 'use strict';
 
 /**
- * BatchExporter turns "these profiles × these timelines → this folder" into
- * render jobs in Resolve's queue, and can start/monitor the render.
+ * BatchExporter turns "these profiles × these timelines (× these marks) → this
+ * folder" into render jobs in Resolve's queue, and can start/monitor the render.
+ *
+ * Profiles have a target:
+ *   timeline  one job for the whole timeline (final exports)
+ *   cuts      one job per cut mark, rendered as a MarkIn/MarkOut range (social cuts)
+ *   stills    one single-frame job per still mark (frame grabs via the Deliver engine)
  */
 
 const path = require('path');
 const { renderName } = require('./naming');
 const { ResolveError } = require('./resolve');
+const { tcForFilename, pad } = require('./timecode');
 
 const TERMINAL = new Set(['complete', 'failed', 'cancelled']);
 const DEFAULT_TEMPLATE = '{timeline}_{profile}';
+const TARGETS = ['timeline', 'cuts', 'stills'];
+const KIND_FOR_TARGET = { timeline: 'final', cuts: 'cut', stills: 'still' };
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -27,6 +35,78 @@ function summarize(statuses) {
   counts.percent = statuses.length ? Math.round(percentSum / statuses.length) : 0;
   counts.done = statuses.length > 0 && statuses.every((s) => TERMINAL.has(s.status));
   return counts;
+}
+
+function profileTarget(profile) {
+  return TARGETS.includes(profile.target) ? profile.target : 'timeline';
+}
+
+/** Guarantee per-mark filenames differ: append a counter token if the template has none. */
+function ensureUniqueToken(template, target) {
+  const t = template || DEFAULT_TEMPLATE;
+  if (target === 'cuts' && !/\{(cut|n|tc|in)\}/.test(t)) return `${t}_cut{cut}`;
+  if (target === 'stills' && !/\{(still|n|tc|in)\}/.test(t)) return `${t}_still{still}`;
+  return t;
+}
+
+function targetDirFor(targetDir, profile) {
+  return profile.subfolder ? path.join(targetDir, profile.subfolder) : targetDir;
+}
+
+/**
+ * Pure expansion of one timeline into job items. No Resolve calls.
+ * @returns {{items: Array, notes: Array}} notes are soft problems (e.g. a cuts profile with no cuts marked)
+ */
+function expandItems({ profiles = [], targets = TARGETS, timelineName, projectName, marks = [], template, targetDir = '', now = new Date() }) {
+  const items = [];
+  const notes = [];
+  const base = {
+    project: projectName,
+    timeline: timelineName,
+    now,
+  };
+  for (const profile of profiles) {
+    const target = profileTarget(profile);
+    if (!targets.includes(target)) continue;
+    const dir = targetDirFor(targetDir, profile);
+    const ctx = {
+      ...base,
+      profile: profile.id,
+      profileName: profile.name,
+      format: profile.format,
+      codec: profile.codec,
+      width: profile.resolution ? profile.resolution.width : '',
+      height: profile.resolution ? profile.resolution.height : '',
+    };
+    const common = { timeline: timelineName, profileId: profile.id, profileName: profile.name, profile, target, kind: KIND_FOR_TARGET[target], targetDir: dir };
+
+    if (target === 'timeline') {
+      const fileName = renderName(template || DEFAULT_TEMPLATE, ctx) + (profile.fileSuffix || '');
+      items.push({ ...common, fileName, range: null, mark: null });
+      continue;
+    }
+
+    const kind = target === 'cuts' ? 'cut' : 'still';
+    const list = marks.filter((m) => m.kind === kind);
+    if (!list.length) {
+      notes.push({ timeline: timelineName, profileId: profile.id, profileName: profile.name, message: `No ${kind}s marked on "${timelineName}"` });
+      continue;
+    }
+    const tpl = ensureUniqueToken(template, target);
+    for (const mark of list) {
+      const n = pad(mark.index, 2);
+      const fileName =
+        renderName(tpl, { ...ctx, cut: n, still: n, n, tc: tcForFilename(mark.tcIn), tcout: tcForFilename(mark.tcOut), in: mark.absIn, out: mark.absOut }) +
+        (profile.fileSuffix || '');
+      items.push({
+        ...common,
+        fileName,
+        range: { markIn: mark.absIn, markOut: mark.absOut },
+        mark: { index: mark.index, kind: mark.kind, tcIn: mark.tcIn, tcOut: mark.tcOut, duration: mark.duration, durationFrames: mark.durationFrames },
+      });
+    }
+  }
+  return { items, notes };
 }
 
 class BatchExporter {
@@ -56,51 +136,36 @@ class BatchExporter {
     return { current, targets: [current] };
   }
 
-  _nameFor({ template, projectName, timelineName, profile }) {
-    const base = renderName(template || DEFAULT_TEMPLATE, {
-      project: projectName,
-      timeline: timelineName,
-      profile: profile.id,
-      profileName: profile.name,
-      format: profile.format,
-      codec: profile.codec,
-      width: profile.resolution ? profile.resolution.width : '',
-      height: profile.resolution ? profile.resolution.height : '',
-      now: this.now(),
+  async _expandTimeline({ profiles, targets, timelineName, projectName, nameTemplate, targetDir }) {
+    const wantsMarks = profiles.some((p) => {
+      const t = profileTarget(p);
+      return targets.includes(t) && t !== 'timeline';
     });
-    return profile.fileSuffix ? `${base}${profile.fileSuffix}` : base;
-  }
-
-  _targetDirFor(targetDir, profile) {
-    return profile.subfolder ? path.join(targetDir, profile.subfolder) : targetDir;
+    const marks = wantsMarks ? (await this.bridge.marksForTimeline(timelineName)).marks : [];
+    return expandItems({ profiles, targets, timelineName, projectName, marks, template: nameTemplate, targetDir, now: this.now() });
   }
 
   /** Dry run: what would be queued, without touching Resolve's render settings. */
-  async plan({ profiles = [], targetDir = '', nameTemplate, timelines } = {}) {
+  async plan({ profiles = [], targets = TARGETS, targetDir = '', nameTemplate, timelines } = {}) {
     const projectName = await this.bridge.projectName();
-    const { targets } = await this._timelineTargets(timelines);
+    const { targets: timelineNames } = await this._timelineTargets(timelines);
     const items = [];
-    for (const timelineName of targets) {
-      for (const profile of profiles) {
-        items.push({
-          timeline: timelineName,
-          profileId: profile.id,
-          profileName: profile.name,
-          targetDir: this._targetDirFor(targetDir, profile),
-          fileName: this._nameFor({ template: nameTemplate, projectName, timelineName, profile }),
-        });
-      }
+    const notes = [];
+    for (const timelineName of timelineNames) {
+      const r = await this._expandTimeline({ profiles, targets, timelineName, projectName, nameTemplate, targetDir });
+      items.push(...r.items.map(({ profile, ...rest }) => rest));
+      notes.push(...r.notes);
     }
-    return items;
+    return { items, notes };
   }
 
-  /** Add one render job per (timeline × profile). Returns { jobs, errors }. */
-  async queue({ profiles = [], targetDir = '', nameTemplate, timelines, clearExisting = false } = {}) {
+  /** Add render jobs. Returns { jobs, errors, notes }. */
+  async queue({ profiles = [], targets = TARGETS, targetDir = '', nameTemplate, timelines, clearExisting = false } = {}) {
     if (!profiles.length) throw new ResolveError('Pick at least one deliverable profile.');
     if (!targetDir) throw new ResolveError('Pick an output folder.');
 
     const projectName = await this.bridge.projectName();
-    const { current, targets } = await this._timelineTargets(timelines);
+    const { current, targets: timelineNames } = await this._timelineTargets(timelines);
 
     if (clearExisting) {
       await this.bridge.deleteAllRenderJobs();
@@ -109,35 +174,36 @@ class BatchExporter {
 
     const jobs = [];
     const errors = [];
+    const notes = [];
     let active = current;
     try {
-      for (const timelineName of targets) {
+      for (const timelineName of timelineNames) {
+        const expanded = await this._expandTimeline({ profiles, targets, timelineName, projectName, nameTemplate, targetDir });
+        notes.push(...expanded.notes);
+        for (const note of expanded.notes) this.log(`${note.profileName}: ${note.message}`);
+        if (!expanded.items.length) continue;
         if (timelineName !== active) {
           await this.bridge.setCurrentTimeline(timelineName);
           active = timelineName;
         }
-        for (const profile of profiles) {
-          const dir = this._targetDirFor(targetDir, profile);
-          const fileName = this._nameFor({ template: nameTemplate, projectName, timelineName, profile });
+        for (const item of expanded.items) {
+          const { profile, ...info } = item;
           try {
-            if (this.ensureDir) this.ensureDir(dir);
-            const applied = await this.bridge.applyProfile(profile, { targetDir: dir, customName: fileName });
+            if (this.ensureDir) this.ensureDir(item.targetDir);
+            const applied = await this.bridge.applyProfile(profile, { targetDir: item.targetDir, customName: item.fileName, range: item.range });
             const jobId = await this.bridge.addRenderJob();
             jobs.push({
               jobId,
-              timeline: timelineName,
-              profileId: profile.id,
-              profileName: profile.name,
-              targetDir: dir,
-              fileName,
+              ...info,
               format: applied.format ? applied.format.id : profile.format,
               codec: applied.codec ? applied.codec.id : profile.codec,
               settings: applied.settings,
             });
-            this.log(`Queued "${profile.name}" for timeline "${timelineName}" → ${path.join(dir, fileName)}`);
+            const where = item.mark ? ` [${item.mark.tcIn}${item.kind === 'cut' ? ` → ${item.mark.tcOut}` : ''}]` : '';
+            this.log(`Queued "${profile.name}" for "${timelineName}"${where} → ${path.join(item.targetDir, item.fileName)}`);
           } catch (err) {
-            errors.push({ timeline: timelineName, profileId: profile.id, profileName: profile.name, message: err.message });
-            this.log(`Skipped "${profile.name}" for timeline "${timelineName}": ${err.message}`);
+            errors.push({ timeline: timelineName, profileId: profile.id, profileName: profile.name, kind: item.kind, fileName: item.fileName, message: err.message });
+            this.log(`Skipped "${profile.name}" (${item.fileName}): ${err.message}`);
           }
         }
       }
@@ -150,7 +216,7 @@ class BatchExporter {
         }
       }
     }
-    return { jobs, errors };
+    return { jobs, errors, notes };
   }
 
   async render(jobIds = []) {
@@ -193,4 +259,4 @@ class BatchExporter {
   }
 }
 
-module.exports = { BatchExporter, TERMINAL, DEFAULT_TEMPLATE, summarize };
+module.exports = { BatchExporter, TERMINAL, DEFAULT_TEMPLATE, TARGETS, summarize, expandItems, ensureUniqueToken, profileTarget };

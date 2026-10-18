@@ -10,6 +10,10 @@
  *
  * A file may hold a single profile object, an array of profiles, or
  * { "profiles": [...] }. See docs/PROFILES.md for the schema.
+ *
+ * target decides what a profile is applied to: "timeline" (the whole
+ * timeline), "cuts" (each cut mark) or "stills" (each still mark). codec may
+ * be "auto" to take the first codec Resolve offers for the format.
  */
 
 const fs = require('fs');
@@ -18,6 +22,7 @@ const path = require('path');
 
 const REQUIRED = ['id', 'name', 'format', 'codec'];
 const RENDER_MODES = ['single', 'individual'];
+const TARGETS = ['timeline', 'cuts', 'stills'];
 
 function userDir() {
   return process.env.EXPORTX_HOME || path.join(os.homedir(), '.exportx');
@@ -39,6 +44,7 @@ function normalize(p) {
     renderPreset: p.renderPreset ? String(p.renderPreset) : null,
     format: String(p.format),
     codec: String(p.codec),
+    target: p.target || 'timeline',
     renderMode: p.renderMode || 'single',
     resolution: p.resolution
       ? { width: Number(p.resolution.width), height: Number(p.resolution.height) }
@@ -65,6 +71,9 @@ function validateProfile(p, source = 'profile') {
   }
   if (p.renderMode && !RENDER_MODES.includes(p.renderMode)) {
     errors.push(`renderMode must be one of ${RENDER_MODES.join(', ')}`);
+  }
+  if (p.target && !TARGETS.includes(p.target)) {
+    errors.push(`target must be one of ${TARGETS.join(', ')}`);
   }
   if (p.resolution) {
     const { width, height } = p.resolution;
@@ -146,6 +155,7 @@ function defaultProfileDirs() {
 }
 
 module.exports = {
+  TARGETS,
   userDir,
   userProfilesDir,
   bundledProfilesDir,

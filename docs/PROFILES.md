@@ -1,23 +1,32 @@
 # Deliverable profiles
 
-A profile is one deliverable: container, codec, optional resolution, Resolve render settings, and where/how to name the file. ExportX queues one Resolve render job per **profile × timeline**.
+A profile is one deliverable: what it applies to, container, codec, optional resolution, Resolve render settings, and where/how to name the file. ExportX queues:
+
+| `target` | One render job per… | Typical use |
+| --- | --- | --- |
+| `timeline` (default) | timeline | final master, final 4K, web version |
+| `cuts` | **cut mark** × timeline, rendered as a `MarkIn`/`MarkOut` range | social cuts, teasers |
+| `stills` | **still mark** × timeline, rendered as a single frame | frame grabs, thumbnails, posters |
+
+Cuts and stills are marked with the pad in the panel (hold = cut, tap = still) or with the Python CLI, and live as Resolve timeline markers (`customData` `exportx:cut` / `exportx:still`).
 
 Profiles are JSON files read from, in order (later wins by `id`):
 
 1. `profiles/` inside the plugin (bundled defaults, see `profiles/default.json`)
 2. `~/.exportx/profiles/` (yours; override the location with `EXPORTX_HOME`)
 
-A file may contain a single profile object, an array of them, or `{ "profiles": [ ... ] }`. Click **Folder** in the panel to open the user folder, and **Reload** after editing.
+A file may contain a single profile object, an array of them, or `{ "profiles": [ ... ] }`. Click the folder icon in the Deliverables rail to open the user folder, and the reload icon after editing.
 
 ## Schema
 
 ```jsonc
 {
-  "id": "h264-web",                 // required. letters, digits, - and _ only; used in filenames and the CLI
-  "name": "H.264 Web (1080p)",      // required. shown in the panel
+  "id": "cuts-social-1080",         // required. letters, digits, - and _ only; used in filenames and the CLI
+  "name": "Cuts · Social 1080p",    // required. shown in the panel
   "description": "…",               // optional
-  "format": "mp4",                  // required. Resolve format id or description ("mp4", "QuickTime", "mov")
-  "codec": "H264",                  // required. Resolve codec id or description ("ProRes422HQ", "Apple ProRes 422 HQ")
+  "target": "cuts",                 // "timeline" (default) | "cuts" | "stills"
+  "format": "mp4",                  // required. Resolve format id or description ("mp4", "QuickTime", "tif")
+  "codec": "H264",                  // required. Resolve codec id or description, or "auto" for the first codec of the format
   "renderPreset": null,             // optional. a Resolve render preset to load first (its name as shown in Deliver)
   "renderMode": "single",           // "single" (one file) or "individual" (one file per clip)
   "resolution": { "width": 1920, "height": 1080 },   // optional. omit to render at timeline resolution
@@ -29,10 +38,10 @@ A file may contain a single profile object, an array of them, or `{ "profiles": 
     "AudioSampleRate": 48000,
     "NetworkOptimization": true
   },
-  "subfolder": "02_Web",            // optional. created under the output folder; relative only, no ".."
-  "fileSuffix": "_WEB",             // optional. appended after the filename template
-  "enabledByDefault": true,         // optional. ticked when the panel first opens
-  "tags": ["web"]                   // optional. for your own organisation
+  "subfolder": "04_Social",         // optional. created under the output folder; relative only, no ".."
+  "fileSuffix": "",                 // optional. appended after the filename template
+  "enabledByDefault": true,         // optional. included when the panel first opens
+  "tags": ["social"]                // optional. for your own organisation
 }
 ```
 
@@ -45,10 +54,14 @@ For each job ExportX calls, in order:
 1. `LoadRenderPreset(renderPreset)` if set (a preset resets most Deliver settings)
 2. `SetCurrentRenderFormatAndCodec(format, codec)`
 3. `SetCurrentRenderMode(0|1)` from `renderMode`
-4. `SetRenderSettings({ …settings, TargetDir, CustomName, FormatWidth/FormatHeight, FrameRate, SelectAllFrames })`
+4. `SetRenderSettings({ …settings, TargetDir, CustomName, FormatWidth/FormatHeight, FrameRate, SelectAllFrames | MarkIn/MarkOut })`
 5. `AddRenderJob()`
 
-Anything in `settings` wins over the preset. `TargetDir` and `CustomName` are always supplied by ExportX from the output folder, subfolder and filename template, so do not put them in `settings`.
+Anything in `settings` wins over the preset. `TargetDir`, `CustomName`, `SelectAllFrames`, `MarkIn` and `MarkOut` are always supplied by ExportX, so do not put them in `settings`. Still profiles always get `ExportAudio: false`.
+
+## Stills
+
+A still is a render job whose in and out point are the same frame, so it goes through the same Deliver engine, colour management and sizing as everything else. Use an image format (`tif`, `png`, `jpg`, `dpx`, `exr`) with `"codec": "auto"` or a specific codec id from the format list. Resolve appends the frame number to image-sequence filenames (for example `SpotA_Main Edit_still01_0086412.tif`); the number is the absolute timeline frame, which is also handy for finding the frame again.
 
 ## Useful `settings` keys
 
@@ -56,8 +69,8 @@ These are the keys `Project.SetRenderSettings()` accepts (from Blackmagic's scri
 
 | Key | Type | Notes |
 | --- | --- | --- |
-| `SelectAllFrames` | bool | `true` renders the whole timeline. ExportX sets this unless you set `MarkIn`/`MarkOut`. |
-| `MarkIn`, `MarkOut` | int | Frame numbers, used when `SelectAllFrames` is false. |
+| `SelectAllFrames` | bool | Set by ExportX (`true` for timeline targets, `false` for cuts and stills). |
+| `MarkIn`, `MarkOut` | int | Absolute timeline frames; set by ExportX from the mark. |
 | `TargetDir` | string | Set by ExportX. |
 | `CustomName` | string | Set by ExportX. |
 | `UniqueFilenameStyle` | int | `0` prefix, `1` suffix. Useful with `"renderMode": "individual"`. |
@@ -78,9 +91,42 @@ These are the keys `Project.SetRenderSettings()` accepts (from Blackmagic's scri
 
 ## Filename template
 
-Set once in the panel (saved for next time). Tokens: `{project}`, `{timeline}`, `{profile}`, `{profileName}`, `{format}`, `{codec}`, `{width}`, `{height}`, `{date}` (YYYYMMDD), `{time}` (HHMMSS). Characters that are illegal in filenames are replaced with `_`. The profile's `fileSuffix` is appended after the template, and Resolve adds the extension.
+Set once in the panel (saved for next time). Tokens:
 
-Example: template `{project}_{timeline}_{date}` with the bundled `h264-web` profile on timeline "Main Edit" in project "SpotA" gives `SpotA_Main Edit_20261017_WEB.mp4` under `<output>/02_Web/`.
+| Token | Value |
+| --- | --- |
+| `{project}` `{timeline}` | Resolve names |
+| `{profile}` `{profileName}` | profile id / display name |
+| `{format}` `{codec}` `{width}` `{height}` | from the profile |
+| `{date}` `{time}` | `YYYYMMDD`, `HHMMSS` |
+| `{cut}` `{still}` `{n}` | two-digit mark number (cuts and stills only) |
+| `{tc}` `{tcout}` | in / out timecode of the mark with dots, e.g. `01.00.12.05` |
+| `{in}` `{out}` | absolute in / out frame of the mark |
+
+Characters that are illegal in filenames become `_`. The profile's `fileSuffix` is appended after the template, and Resolve adds the extension. For cuts and stills, if the template contains none of `{cut}` `{still}` `{n}` `{tc}` `{in}`, ExportX appends `_cut{cut}` or `_still{still}` so every mark gets its own file.
+
+Example: template `{project}_{timeline}_{date}` on timeline "Main Edit" in project "SpotA" with the bundled profiles gives
+
+```
+02_Final/SpotA_Main Edit_20261018_4K.mp4
+04_Social/SpotA_Main Edit_20261018_cut01.mp4
+04_Social/SpotA_Main Edit_20261018_cut02.mp4
+06_Stills/SpotA_Main Edit_20261018_still01_0086412.tif
+```
+
+## Bundled profiles
+
+| id | target | Output | Default |
+| --- | --- | --- | --- |
+| `final-prores-master` | timeline | QuickTime ProRes 422 HQ, 24-bit PCM | on |
+| `final-4k-h265` | timeline | MP4 H.265 3840×2160 | on |
+| `final-1080-h264` | timeline | MP4 H.264 1920×1080 | on |
+| `cuts-social-1080` | cuts | MP4 H.264 1920×1080 per cut | on |
+| `cuts-social-vertical` | cuts | MP4 H.264 1080×1920 per cut | off |
+| `stills-tiff` | stills | TIFF per still | on |
+| `stills-jpeg` | stills | JPEG per still | off |
+| `review-proxy` | timeline | MP4 H.264 1280×720 | off |
+| `clips-prores` | timeline | ProRes 422, one file per clip | off |
 
 ## Examples
 
@@ -98,15 +144,30 @@ A client-specific HEVC 10-bit master:
 }
 ```
 
-Reuse a Deliver-page preset you already maintain, just changing where it goes:
+Square cuts for a feed, reusing a Deliver preset you already maintain:
 
 ```json
 {
-  "id": "house-youtube",
-  "name": "House YouTube preset",
-  "renderPreset": "YouTube 2160p",
+  "id": "cuts-square",
+  "name": "Cuts · Square",
+  "target": "cuts",
+  "renderPreset": "Instagram Square",
   "format": "mp4",
   "codec": "H264",
-  "subfolder": "YouTube"
+  "resolution": { "width": 1080, "height": 1080 },
+  "subfolder": "04_Social/1x1"
+}
+```
+
+16-bit PNG stills for a poster designer:
+
+```json
+{
+  "id": "stills-png16",
+  "name": "Stills · PNG 16-bit",
+  "target": "stills",
+  "format": "png",
+  "codec": "RGB 16 bits",
+  "subfolder": "06_Stills/PNG"
 }
 ```

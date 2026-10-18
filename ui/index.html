@@ -5,121 +5,169 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data:"
+      content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data:; font-src 'self'"
     />
     <title>ExportX</title>
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
     <header class="topbar">
-      <div class="brand">
-        <span class="logo">X</span>
-        <div>
-          <h1>ExportX</h1>
-          <p class="subtitle">Batch deliverables for DaVinci Resolve</p>
-        </div>
+      <div class="brand" title="ExportX">
+        <span class="brand-mark">X</span>
+        <span class="wordmark">Export<b>X</b></span>
       </div>
-      <div class="conn" id="conn">
-        <span class="dot" id="conn-dot"></span>
-        <span id="conn-text">Connecting…</span>
-        <button class="ghost small" id="btn-refresh" title="Re-read project and timelines">Refresh</button>
+      <nav class="crumbs" aria-label="Context">
+        <span class="crumb" id="crumb-project">—</span>
+        <span class="sep">›</span>
+        <span class="crumb" id="crumb-timeline">—</span>
+      </nav>
+      <div class="top-actions">
+        <span class="conn" id="conn"><i class="dot" id="conn-dot"></i><span id="conn-text">Connecting…</span></span>
+        <button class="icon-btn" id="btn-refresh" title="Re-read project and timelines" aria-label="Refresh">
+          <svg viewBox="0 0 16 16"><path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9M13.5 2.5v2.6h-2.6"/></svg>
+        </button>
+        <button class="btn ghost" id="btn-queue">Queue</button>
+        <button class="btn primary" id="btn-go">Queue &amp; Render</button>
+        <button class="btn danger hidden" id="btn-stop">Stop</button>
       </div>
     </header>
+    <div class="progress-line" id="progress-line"><i id="progress-fill"></i></div>
+    <div class="banner hidden" id="banner" role="status"></div>
 
-    <div class="banner hidden" id="banner"></div>
+    <div class="navigator">
+      <span class="label">Timelines</span>
+      <div class="chips" id="timelines"></div>
+      <span class="nav-hint" id="nav-hint"></span>
+    </div>
 
-    <main class="grid">
-      <section class="card" id="card-profiles">
-        <div class="card-head">
-          <h2>Deliverables</h2>
-          <div class="actions">
-            <button class="ghost small" id="btn-all">All</button>
-            <button class="ghost small" id="btn-none">None</button>
-            <button class="ghost small" id="btn-reload-profiles" title="Re-read profile JSON files">Reload</button>
-            <button class="ghost small" id="btn-profiles-folder" title="Open ~/.exportx/profiles">Folder</button>
+    <main class="workspace">
+      <aside class="rail" aria-label="Deliverables">
+        <div class="pane-head">
+          <span class="label">Deliverables</span>
+          <span class="count" id="profiles-count"></span>
+          <div class="pane-tools">
+            <button class="icon-btn" id="btn-all" title="Include all">
+              <svg viewBox="0 0 16 16"><path d="M2.5 8.5l3 3 8-8"/></svg>
+            </button>
+            <button class="icon-btn" id="btn-none" title="Include none">
+              <svg viewBox="0 0 16 16"><path d="M3 8h10"/></svg>
+            </button>
+            <button class="icon-btn" id="btn-reload-profiles" title="Reload profile files">
+              <svg viewBox="0 0 16 16"><path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9M13.5 2.5v2.6h-2.6"/></svg>
+            </button>
+            <button class="icon-btn" id="btn-profiles-folder" title="Open the user profiles folder">
+              <svg viewBox="0 0 16 16"><path d="M2 4.5A1.5 1.5 0 0 1 3.5 3h3l1.5 1.5h4.5A1.5 1.5 0 0 1 14 6v5.5a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 11.5z"/></svg>
+            </button>
           </div>
         </div>
-        <ul class="profiles" id="profiles"></ul>
-        <p class="hint">
-          Add your own in <code id="user-dir">~/.exportx/profiles/</code>. Need codec ids?
+        <ul class="layers" id="profiles"></ul>
+        <div class="pane-foot">
           <button class="link" id="btn-caps">List formats &amp; codecs</button>
-        </p>
-      </section>
+          <code id="user-dir" title="User profiles folder"></code>
+        </div>
+      </aside>
 
-      <section class="card" id="card-output">
-        <h2>Output</h2>
-        <label class="field">
-          <span>Folder</span>
-          <div class="row">
-            <input type="text" id="target-dir" placeholder="/Volumes/Deliverables/Job_123" spellcheck="false" />
-            <button id="btn-browse">Browse…</button>
-            <button class="ghost" id="btn-open-out" title="Open in Finder / Explorer">Open</button>
+      <section class="canvas">
+        <div class="sheet capture" id="capture">
+          <div class="sheet-head">
+            <span class="label">Capture</span>
+            <span class="summary" id="capture-tl"></span>
+            <span class="play" id="play-state"><i></i><span>stopped</span></span>
+            <span class="tc" id="playhead">--:--:--:--</span>
           </div>
-        </label>
-        <label class="field">
-          <span>Filename template</span>
-          <input type="text" id="name-template" value="{timeline}_{profile}" spellcheck="false" />
-          <small class="tokens" id="tokens"></small>
-        </label>
-
-        <h2 class="mt">Timelines</h2>
-        <div class="field">
-          <label class="radio"><input type="radio" name="tl-mode" value="current" checked /> Current timeline
-            <strong id="current-tl-name">—</strong></label>
-          <label class="radio"><input type="radio" name="tl-mode" value="pick" /> Choose timelines</label>
-          <ul class="timelines hidden" id="timelines"></ul>
-        </div>
-
-        <h2 class="mt">Options</h2>
-        <label class="check"><input type="checkbox" id="opt-clear" /> Clear Resolve's render queue first</label>
-        <label class="check"><input type="checkbox" id="opt-start" checked /> Start rendering immediately</label>
-
-        <div class="preview">
-          <div class="card-head">
-            <h3>Will create</h3>
-            <span class="muted" id="preview-count"></span>
+          <div class="capture-grid">
+            <button class="pad" id="pad" type="button" aria-label="Hold to mark a cut, tap to mark a still">
+              <span class="pad-main">Hold to mark a cut</span>
+              <span class="pad-sub">Tap to mark a still &middot; Space or M while this panel is focused</span>
+              <span class="pad-live" id="pad-live"></span>
+            </button>
+            <div class="marks">
+              <div class="marks-head"><span class="label">Cuts</span><span class="count" id="cuts-count">0</span><button class="link" id="btn-clear-cuts">clear</button></div>
+              <ul class="mark-list" id="cuts"></ul>
+              <div class="marks-head"><span class="label">Stills</span><span class="count" id="stills-count">0</span><button class="link" id="btn-clear-stills">clear</button></div>
+              <ul class="mark-list" id="stills"></ul>
+            </div>
           </div>
-          <ul id="preview"></ul>
-        </div>
-
-        <div class="cta">
-          <button class="primary big" id="btn-go">Queue &amp; Render</button>
-          <button class="big" id="btn-queue">Queue only</button>
-          <button class="danger big hidden" id="btn-stop">Stop</button>
-        </div>
-      </section>
-
-      <section class="card wide" id="card-jobs">
-        <div class="card-head">
-          <h2>Jobs</h2>
-          <div class="progress-total">
-            <div class="bar"><div class="fill" id="total-fill"></div></div>
-            <span id="total-text">Idle</span>
+          <div class="capture-actions">
+            <button class="btn small" id="btn-export-cuts">Export cuts</button>
+            <button class="btn small" id="btn-export-stills">Export stills</button>
+            <span class="muted" id="capture-hint">Play the timeline in Resolve, then hold or tap.</span>
           </div>
         </div>
-        <table class="jobs">
-          <thead>
-            <tr>
-              <th>Timeline</th>
-              <th>Deliverable</th>
-              <th>File</th>
-              <th>Status</th>
-              <th class="w">Progress</th>
-            </tr>
-          </thead>
-          <tbody id="jobs"></tbody>
-        </table>
-        <p class="muted empty" id="jobs-empty">Nothing queued yet.</p>
+
+        <div class="sheet">
+          <div class="sheet-head"><span class="label">Output</span></div>
+          <div class="field-row">
+            <label for="target-dir">Folder</label>
+            <div class="field">
+              <input type="text" id="target-dir" placeholder="/Volumes/Deliverables/Job_123" spellcheck="false" />
+              <button class="icon-btn" id="btn-browse" title="Choose folder">
+                <svg viewBox="0 0 16 16"><path d="M2 4.5A1.5 1.5 0 0 1 3.5 3h3l1.5 1.5h4.5A1.5 1.5 0 0 1 14 6v5.5a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 11.5z"/></svg>
+              </button>
+              <button class="icon-btn" id="btn-open-out" title="Reveal folder">
+                <svg viewBox="0 0 16 16"><path d="M6.5 3.5h-3v9h9v-3M9.5 3h3.5v3.5M13 3L7.5 8.5"/></svg>
+              </button>
+            </div>
+          </div>
+          <div class="field-row">
+            <label for="name-template">Filename</label>
+            <div class="field">
+              <input type="text" id="name-template" value="{timeline}_{profile}" spellcheck="false" />
+            </div>
+          </div>
+          <div class="tokens" id="tokens"></div>
+          <div class="switch-row">
+            <label class="switch"><input type="checkbox" id="opt-start" checked /><i></i><span>Start rendering when queued</span></label>
+            <label class="switch"><input type="checkbox" id="opt-clear" /><i></i><span>Clear Resolve's queue first</span></label>
+          </div>
+        </div>
+
+        <div class="sheet">
+          <div class="sheet-head">
+            <span class="label">Will create</span>
+            <span class="summary" id="preview-summary"></span>
+            <span class="figure" id="preview-count">0</span>
+            <span class="unit">jobs</span>
+          </div>
+          <div class="tree" id="preview"></div>
+        </div>
+
+        <div class="sheet grow">
+          <div class="sheet-head">
+            <span class="label">Render queue</span>
+            <span class="summary" id="total-text">Idle</span>
+            <span class="figure" id="total-pct">—</span>
+          </div>
+          <table class="jobs">
+            <thead>
+              <tr>
+                <th>Timeline</th>
+                <th>Deliverable</th>
+                <th>File</th>
+                <th>Status</th>
+                <th class="w">Progress</th>
+              </tr>
+            </thead>
+            <tbody id="jobs"></tbody>
+          </table>
+          <p class="empty" id="jobs-empty">Nothing queued.</p>
+        </div>
       </section>
 
-      <section class="card wide" id="card-log">
-        <div class="card-head">
-          <h2>Log</h2>
-          <button class="ghost small" id="btn-clear-log">Clear</button>
-        </div>
-        <pre id="log"></pre>
-      </section>
+      <aside class="inspector" aria-label="Inspector">
+        <div class="pane-head"><span class="label">Inspector</span><span class="count" id="inspector-kind"></span></div>
+        <div id="inspector-body"></div>
+      </aside>
     </main>
+
+    <footer class="drawer" id="drawer">
+      <button class="drawer-head" id="drawer-toggle">
+        <span class="label">Log</span>
+        <span class="last" id="log-last"></span>
+        <span class="chev">▴</span>
+      </button>
+      <pre id="log"></pre>
+    </footer>
 
     <script src="renderer.js"></script>
   </body>

@@ -1,4 +1,4 @@
-# DaVinci Resolve render API cheat sheet
+# DaVinci Resolve API cheat sheet
 
 This is the slice of Blackmagic's scripting API that ExportX uses. The authoritative reference is the `README.txt` that ships with your Resolve install under `Developer/Scripting/`, and `Developer/Workflow Integrations/README.txt` for the plugin host. Both change between versions; when they disagree with this page, they win.
 
@@ -25,7 +25,7 @@ Project
   GetRenderPresetList() -> [name]
   LoadRenderPreset(name) -> bool
   SaveAsNewRenderPreset(name) -> bool
-  GetRenderFormats() -> {description: formatId}        e.g. {"QuickTime": "mov", "MP4": "mp4"}
+  GetRenderFormats() -> {description: formatId}        e.g. {"QuickTime": "mov", "MP4": "mp4", "TIFF": "tif"}
   GetRenderCodecs(formatId) -> {description: codecId}  e.g. {"Apple ProRes 422 HQ": "ProRes422HQ"}
   GetCurrentRenderFormatAndCodec() -> {format, codec}
   SetCurrentRenderFormatAndCodec(formatId, codecId) -> bool
@@ -34,7 +34,7 @@ Project
   SetRenderSettings({...}) -> bool                     keys listed in docs/PROFILES.md
   --- queue ---
   AddRenderJob() -> jobId
-  GetRenderJobList() -> [{JobId, TimelineName, TargetDir, OutputFilename, RenderMode, Format, Codec, ...}]
+  GetRenderJobList() -> [{JobId, TimelineName, TargetDir, OutputFilename, RenderMode, Format, Codec, MarkIn, MarkOut, ...}]
   DeleteRenderJob(jobId) / DeleteAllRenderJobs()
   StartRendering(isInteractiveMode=False)
   StartRendering([jobId, ...], isInteractiveMode=False)
@@ -43,18 +43,36 @@ Project
   IsRenderingInProgress() -> bool
   GetRenderJobStatus(jobId) -> {JobStatus, CompletionPercentage, EstimatedTimeRemainingInMs, TimeTakenToRenderInMs, Error}
       JobStatus is one of "Ready" | "Rendering" | "Complete" | "Failed" | "Cancelled"
+  ExportCurrentFrameAsStill(filePath) -> bool          (newer versions; ExportX uses one-frame render jobs instead)
 Timeline
-  GetName() GetStartFrame() GetEndFrame() GetSetting(name) SetSetting(name, value) GetMarkers()
+  GetName() GetStartFrame() GetEndFrame() GetStartTimecode()
+  GetSetting(name) SetSetting(name, value)             "timelineFrameRate", "timelineDropFrameTimecode", ...
+  GetCurrentTimecode() -> "HH:MM:SS:FF" (";" before FF when drop-frame)
+  SetCurrentTimecode(tc) -> bool
+  --- markers ---
+  GetMarkers() -> {frameId: {color, duration, note, name, customData}}   frameId is relative to the timeline start
+  AddMarker(frameId, color, name, note, duration, customData) -> bool   fails if a marker already sits on frameId
+  GetMarkerByCustomData(customData) -> {frameId: {...}}
+  UpdateMarkerCustomData(frameId, customData) -> bool
+  DeleteMarkerAtFrame(frameNum) -> bool
+  DeleteMarkerByCustomData(customData) -> bool          deletes the FIRST match only
+  DeleteMarkersByColor(color) -> bool                   or "All"
+  GrabStill() / GrabAllStills(stillFrameSource)         Color-page gallery stills (not used)
 ```
+
+Marker colours: Blue, Cyan, Green, Yellow, Red, Pink, Purple, Fuchsia, Rose, Lavender, Sky, Mint, Lemon, Sand, Cocoa, Cream. ExportX uses Cyan for cuts and Pink for stills.
 
 ## Behaviour worth knowing
 
-- Render settings are **global Deliver-page state**. `SetRenderSettings` changes what the Deliver page shows; `AddRenderJob` snapshots it into a job. ExportX therefore applies a profile and adds a job immediately, one profile at a time.
+- Render settings are **global Deliver-page state**. `SetRenderSettings` changes what the Deliver page shows; `AddRenderJob` snapshots it into a job. ExportX therefore applies a profile and adds a job immediately, one item at a time.
 - `AddRenderJob` uses the **current timeline**. To batch several timelines, `SetCurrentTimeline` before each group of jobs and switch back afterwards (ExportX does this).
 - `LoadRenderPreset` resets most settings, so load the preset first and override afterwards.
+- `MarkIn`/`MarkOut` are **absolute frames** in the same space as `GetStartFrame()`. Marker `frameId`s are **relative** to the timeline start. `abs = GetStartFrame() + frameId`.
+- A render job with `MarkIn == MarkOut` renders exactly one frame. With an image format this is a still; Resolve appends the frame number to the filename.
 - `StartRendering` returns `false` if a render is already running.
 - `isInteractiveMode=true` shows Resolve's render progress UI and prompts; ExportX uses `false` and polls `GetRenderJobStatus` itself.
 - `FormatWidth`/`FormatHeight` change the output size; how a mismatched aspect ratio is handled follows the project's image scaling settings.
+- There is no play/pause call in the scripting API. ExportX polls `GetCurrentTimecode()` to show the playhead and detect motion; the user starts playback in Resolve.
 - Codec and format ids differ by OS and Resolve version. Match loosely and offer the user the list (`capabilities()` in `src/resolve.js`).
 
 ## Workflow Integration plugin host

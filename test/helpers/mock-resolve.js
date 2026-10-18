@@ -6,10 +6,11 @@
  * outside Resolve (EXPORTX_MOCK=1 npx electron .).
  *
  * Render jobs "progress" a fixed amount on each GetRenderJobStatus call so a
- * polling loop terminates quickly.
+ * polling loop terminates quickly. Timelines carry markers, a frame rate and
+ * a playhead so the capture (cuts/stills) flow can be exercised too.
  */
 
-const DEFAULT_FORMATS = { QuickTime: 'mov', MP4: 'mp4', 'MXF OP1A': 'mxf_op1a' };
+const DEFAULT_FORMATS = { QuickTime: 'mov', MP4: 'mp4', 'MXF OP1A': 'mxf_op1a', TIFF: 'tif', JPEG: 'jpg', PNG: 'png' };
 const DEFAULT_CODECS = {
   mov: {
     'Apple ProRes 422 HQ': 'ProRes422HQ',
@@ -20,15 +21,92 @@ const DEFAULT_CODECS = {
   },
   mp4: { 'H.264': 'H264', 'H.265': 'H265' },
   mxf_op1a: { 'DNxHR HQX': 'DNxHR HQX', 'DNxHD 1080p 220/185/175': 'DNxHD1080p220' },
+  tif: { 'RGB 8 bits': 'RGB8', 'RGB 16 bits': 'RGB16' },
+  jpg: { JPEG: 'JPEG' },
+  png: { 'RGB 8 bits': 'RGB8', 'RGB 16 bits': 'RGB16' },
 };
 
+function pad(n) {
+  return String(n).padStart(2, '0');
+}
+
+function simpleTcToFrames(tc, fps) {
+  const [h, m, s, f] = String(tc).split(/[:;]/).map(Number);
+  return (h * 3600 + m * 60 + s) * Math.round(fps) + f;
+}
+
+function simpleFramesToTc(frames, fps) {
+  const tb = Math.round(fps);
+  const f = frames % tb;
+  const s = Math.floor(frames / tb) % 60;
+  const m = Math.floor(frames / (tb * 60)) % 60;
+  const h = Math.floor(frames / (tb * 3600)) % 24;
+  return `${pad(h)}:${pad(m)}:${pad(s)}:${pad(f)}`;
+}
+
 class MockTimeline {
-  constructor(name, index) {
-    this.name = name;
+  constructor(spec, index) {
+    const o = typeof spec === 'string' ? { name: spec } : spec;
+    this.name = o.name;
     this.index = index;
+    this.fps = o.fps || 24;
+    this.startFrame = o.startFrame != null ? o.startFrame : 3600 * Math.round(this.fps); // 01:00:00:00
+    this.endFrame = o.endFrame != null ? o.endFrame : this.startFrame + 10 * 60 * Math.round(this.fps) - 1;
+    this.markers = {};
+    for (const [k, v] of Object.entries(o.markers || {})) this.markers[k] = { color: 'Blue', duration: 1, note: '', name: '', customData: '', ...v };
+    this.playheadAbs = o.playheadAbs != null ? o.playheadAbs : this.startFrame;
+    this.calls = [];
   }
   GetName() {
     return this.name;
+  }
+  GetStartFrame() {
+    return this.startFrame;
+  }
+  GetEndFrame() {
+    return this.endFrame;
+  }
+  GetStartTimecode() {
+    return simpleFramesToTc(this.startFrame, this.fps);
+  }
+  GetSetting(name) {
+    if (name === 'timelineFrameRate') return String(this.fps);
+    if (name === 'timelineDropFrameTimecode') return '0';
+    return '';
+  }
+  GetCurrentTimecode() {
+    return simpleFramesToTc(this.playheadAbs, this.fps);
+  }
+  SetCurrentTimecode(tc) {
+    this.calls.push(['SetCurrentTimecode', tc]);
+    this.playheadAbs = simpleTcToFrames(tc, this.fps);
+    return true;
+  }
+  GetMarkers() {
+    const out = {};
+    for (const [k, v] of Object.entries(this.markers)) out[k] = { ...v };
+    return out;
+  }
+  AddMarker(frameId, color, name, note, duration, customData) {
+    this.calls.push(['AddMarker', frameId, color, name, note, duration, customData]);
+    if (this.markers[frameId]) return false;
+    this.markers[frameId] = { color, name, note, duration, customData: customData || '' };
+    return true;
+  }
+  DeleteMarkerAtFrame(frameId) {
+    if (!this.markers[frameId]) return false;
+    delete this.markers[frameId];
+    return true;
+  }
+  DeleteMarkerByCustomData(customData) {
+    const hit = Object.entries(this.markers).find(([, v]) => v.customData === customData);
+    if (!hit) return false;
+    delete this.markers[hit[0]];
+    return true;
+  }
+  DeleteMarkersByColor(color) {
+    for (const [k, v] of Object.entries(this.markers)) if (v.color === color) delete this.markers[k];
+    return true;
   }
 }
 
@@ -44,7 +122,7 @@ class MockProject {
     rejectSettings = null,
   } = {}) {
     this.name = name;
-    this.timelines = timelines.map((n, i) => new MockTimeline(n, i + 1));
+    this.timelines = timelines.map((spec, i) => new MockTimeline(spec, i + 1));
     this.currentTimeline = this.timelines[0] || null;
     this.presets = presets;
     this.formats = formats;
@@ -138,6 +216,8 @@ class MockProject {
       Codec: this.currentCodec,
       TargetDir: this.currentSettings.TargetDir,
       OutputFilename: this.currentSettings.CustomName,
+      MarkIn: this.currentSettings.MarkIn,
+      MarkOut: this.currentSettings.MarkOut,
       settings: { ...this.currentSettings },
       status: 'Ready',
       percent: 0,
