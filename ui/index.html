@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data:; font-src 'self'"
+      content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data:; font-src 'self'; media-src 'self' file: data: blob:"
     />
     <title>ExportX</title>
     <link rel="stylesheet" href="styles.css" />
@@ -16,6 +16,10 @@
         <span class="brand-mark">X</span>
         <span class="wordmark">Export<b>X</b></span>
       </div>
+      <nav class="tabs" role="tablist" aria-label="Views">
+        <button class="tab on" id="tab-export" role="tab" aria-selected="true" data-view="export">Export</button>
+        <button class="tab" id="tab-settings" role="tab" aria-selected="false" data-view="settings">Settings</button>
+      </nav>
       <div class="conn" id="conn"><i class="dot" id="conn-dot"></i><span id="conn-text">Connecting…</span></div>
       <button class="icon-btn" id="btn-refresh" title="Re-read the project and timelines" aria-label="Refresh">
         <svg viewBox="0 0 16 16"><path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9M13.5 2.5v2.6h-2.6"/></svg>
@@ -24,7 +28,8 @@
     <div class="progress-line" id="progress-line"><i id="progress-fill"></i></div>
     <div class="banner hidden" id="banner" role="status"></div>
 
-    <main class="steps">
+    <!-- ============================================================ Export view -->
+    <main class="steps" id="view-export">
       <section class="step" aria-labelledby="h-choose">
         <h2 id="h-choose"><span class="n">1</span>What to export</h2>
         <ul class="choices" id="profiles"></ul>
@@ -32,11 +37,49 @@
           <label for="target-dir">Save to</label>
           <input type="text" id="target-dir" placeholder="Choose a folder" spellcheck="false" />
           <button class="btn" id="btn-browse">Choose…</button>
+          <button class="icon-btn" id="btn-open-out" title="Open the output folder" aria-label="Open the output folder">
+            <svg viewBox="0 0 16 16"><path d="M6.5 3.5h-3v9h9v-3M9.5 3h3.5v3.5M13 3L7.5 8.5"/></svg>
+          </button>
         </div>
+        <p class="hint" id="choose-hint"></p>
       </section>
 
       <section class="step" aria-labelledby="h-mark">
         <h2 id="h-mark"><span class="n">2</span>Mark while it plays</h2>
+
+        <div class="viewer" id="viewer">
+          <video id="pv" playsinline preload="auto"></video>
+          <div class="viewer-empty" id="viewer-empty">
+            <p>See the picture here while you mark.</p>
+            <button class="btn" id="btn-preview-render">Render preview</button>
+            <span class="hint">A small 720p copy of this timeline, made by Resolve's render engine. About as long as a quick export. Until then, play in Resolve and mark from its playhead.</span>
+          </div>
+          <div class="viewer-busy hidden" id="viewer-busy">
+            <div class="bar"><i id="pv-progress"></i></div>
+            <span id="pv-progress-text">Rendering preview…</span>
+          </div>
+          <button class="viewer-play hidden" id="pv-overlay" aria-label="Play">
+            <svg viewBox="0 0 24 24"><path d="M8 5.5v13l11-6.5z"/></svg>
+          </button>
+        </div>
+        <div class="scrub hidden" id="scrub">
+          <div class="scrub-marks" id="scrub-marks"></div>
+          <input type="range" id="pv-scrub" min="0" max="1000" value="0" step="1" aria-label="Scrub the preview" />
+        </div>
+        <div class="transport hidden" id="transport">
+          <button class="icon-btn" id="pv-play" aria-label="Play or pause">
+            <svg viewBox="0 0 16 16" class="ic-play"><path d="M5 3.5v9l7.5-4.5z"/></svg>
+            <svg viewBox="0 0 16 16" class="ic-pause hidden"><path d="M5 3.5v9M11 3.5v9"/></svg>
+          </button>
+          <button class="icon-btn" id="pv-mute" aria-label="Mute or unmute">
+            <svg viewBox="0 0 16 16"><path d="M3 6h2.5L9 3.5v9L5.5 10H3zM11 6a2.5 2.5 0 0 1 0 4"/></svg>
+          </button>
+          <span class="tc-small" id="pv-tc">--:--:--:--</span>
+          <span class="transport-hint" id="mark-source">Marks come from the preview. Space plays, arrows step a frame.</span>
+          <button class="link" id="btn-preview-rerender">re-render</button>
+          <button class="link" id="btn-mark-source">mark from Resolve instead</button>
+        </div>
+
         <div class="playhead">
           <span class="where" id="capture-tl">No timeline</span>
           <span class="play" id="play-state"><i></i><span>stopped</span></span>
@@ -57,7 +100,7 @@
             <ul class="mark-list" id="stills"></ul>
           </div>
         </div>
-        <p class="hint" id="capture-hint">Play the timeline in Resolve, then hold or tap the pad. Marks are saved as timeline markers.</p>
+        <p class="hint" id="capture-hint">Hold the pad (or the M key) while it plays to mark a cut; tap for a still. Marks are saved as timeline markers.</p>
       </section>
 
       <section class="step" aria-labelledby="h-export">
@@ -75,38 +118,55 @@
         </div>
         <ul class="files" id="jobs"></ul>
       </section>
+    </main>
 
-      <details class="more" id="more">
-        <summary>More options</summary>
-        <div class="more-body">
-          <div class="field">
-            <label for="name-template">File names</label>
-            <input type="text" id="name-template" value="{timeline}_{profile}" spellcheck="false" />
-            <div class="tokens" id="tokens"></div>
-          </div>
-          <div class="field">
-            <span class="field-label">Timelines</span>
-            <div class="chips" id="timelines"></div>
-            <span class="hint" id="nav-hint"></span>
-          </div>
-          <label class="switch"><input type="checkbox" id="opt-start" checked /><i></i><span>Start rendering as soon as jobs are queued</span></label>
-          <label class="switch"><input type="checkbox" id="opt-clear" /><i></i><span>Clear Resolve's render queue first</span></label>
-          <div class="row wrap">
-            <button class="btn small" id="btn-queue">Queue without rendering</button>
-            <button class="btn small" id="btn-open-out">Open output folder</button>
-            <button class="btn small" id="btn-profiles-folder">Edit profiles…</button>
-            <button class="btn small" id="btn-reload-profiles">Reload profiles</button>
-            <button class="btn small" id="btn-caps">List formats &amp; codecs</button>
-          </div>
-          <p class="hint">
-            Each deliverable is a small JSON file in <code id="user-dir"></code>: container, codec, size, folder, and whether it applies to the whole timeline, each cut or each still.
-          </p>
-          <div class="log-wrap">
-            <span class="label">Log</span>
-            <pre id="log"></pre>
-          </div>
+    <!-- ============================================================ Settings view -->
+    <main class="steps settings" id="view-settings" hidden>
+      <section class="step" aria-labelledby="h-naming">
+        <h2 id="h-naming">File names</h2>
+        <div class="field">
+          <label for="name-template">Pattern</label>
+          <input type="text" id="name-template" value="{yymmdd}_{project}_{label}" spellcheck="false" />
+          <div class="tokens" id="tokens"></div>
         </div>
-      </details>
+        <label class="switch"><input type="checkbox" id="opt-underscore" checked /><i></i><span>Spaces become underscores</span></label>
+        <p class="hint">
+          Example: <code id="name-example">251018_Project_Final.mp4</code> &nbsp;·&nbsp; cuts and stills get a number: <code id="name-example-cut">251018_Project_Social_01.mp4</code>.
+          Each deliverable's <em>label</em> is set below.
+        </p>
+      </section>
+
+      <section class="step" aria-labelledby="h-deliverables">
+        <h2 id="h-deliverables">Deliverables</h2>
+        <p class="hint top">
+          Formats and codecs are read from your Resolve, and every file is rendered by Resolve's own engine. To carry over advanced Deliver settings, start a deliverable from one of your Deliver presets.
+        </p>
+        <ul class="delivs" id="settings-profiles"></ul>
+        <div class="row wrap">
+          <button class="btn" id="btn-add-profile">Add a deliverable</button>
+          <button class="btn small" id="btn-reload-profiles">Reload</button>
+          <button class="btn small" id="btn-profiles-folder">Open the JSON folder</button>
+        </div>
+        <p class="hint">Your changes are saved as small JSON files in <code id="user-dir"></code>. "Reset" brings a built-in deliverable back to its defaults.</p>
+      </section>
+
+      <section class="step" aria-labelledby="h-advanced">
+        <h2 id="h-advanced">Advanced</h2>
+        <div class="field">
+          <span class="field-label">Timelines to export</span>
+          <div class="chips" id="timelines"></div>
+          <span class="hint" id="nav-hint"></span>
+        </div>
+        <label class="switch"><input type="checkbox" id="opt-start" checked /><i></i><span>Start rendering as soon as the jobs are queued (off: only add them to Resolve's queue)</span></label>
+        <label class="switch"><input type="checkbox" id="opt-clear" /><i></i><span>Clear Resolve's render queue first</span></label>
+        <div class="row wrap">
+          <button class="btn small" id="btn-caps">List formats &amp; codecs in the log</button>
+        </div>
+        <div class="log-wrap">
+          <span class="label">Log</span>
+          <pre id="log"></pre>
+        </div>
+      </section>
     </main>
 
     <script src="renderer.js"></script>

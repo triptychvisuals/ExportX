@@ -56,13 +56,14 @@ CONFIG = {
     "out": "",                        # e.g. "/Volumes/Deliver/Job123"
     "profiles": [],                   # e.g. ["final-4k-h265", "stills-tiff"]; [] = enabledByDefault ones
     "targets": [],                    # e.g. ["stills"]; [] = all
-    "template": "{timeline}_{profile}",
+    "template": "{yymmdd}_{project}_{label}",
+    "underscore_spaces": True,
     "render": True,
     "wait": True,
     "clear_queue": False,
 }
 
-DEFAULT_TEMPLATE = "{timeline}_{profile}"
+DEFAULT_TEMPLATE = "{yymmdd}_{project}_{label}"
 TARGETS = ("timeline", "cuts", "stills")
 TERMINAL = {"complete", "failed", "cancelled"}
 UNSAFE = re.compile(r'[\\/:*?"<>|\x00-\x1f]')
@@ -143,9 +144,10 @@ def sanitize(name: str) -> str:
     return cleaned
 
 
-def render_name(template: str, ctx: dict, now: _dt.datetime | None = None) -> str:
+def render_name(template: str, ctx: dict, now: _dt.datetime | None = None, underscore_spaces: bool = False) -> str:
     now = now or _dt.datetime.now()
-    values = {"date": now.strftime("%Y%m%d"), "time": now.strftime("%H%M%S"), **ctx}
+    values = {"yymmdd": now.strftime("%y%m%d"), "date": now.strftime("%Y%m%d"), "yyyymmdd": now.strftime("%Y%m%d"),
+              "time": now.strftime("%H%M%S"), **ctx}
 
     def repl(m):
         v = values.get(m.group(1))
@@ -153,16 +155,22 @@ def render_name(template: str, ctx: dict, now: _dt.datetime | None = None) -> st
 
     out = re.sub(r"\{(\w+)\}", repl, template or "")
     out = sanitize(out)
+    if underscore_spaces:
+        out = re.sub(r"\s+", "_", out)
     out = re.sub(r"_{2,}", "_", out).strip("_")
     return out or "export"
 
 
+def default_label(name: str) -> str:
+    first = (str(name or "").strip().split() or ["Export"])[0]
+    clean = re.sub(r"[^A-Za-z0-9]", "", first)
+    return (clean[0].upper() + clean[1:]) if clean else "Export"
+
+
 def ensure_unique_token(template: str, target: str) -> str:
     t = template or DEFAULT_TEMPLATE
-    if target == "cuts" and not re.search(r"\{(cut|n|tc|in)\}", t):
-        return t + "_cut{cut}"
-    if target == "stills" and not re.search(r"\{(still|n|tc|in)\}", t):
-        return t + "_still{still}"
+    if target in ("cuts", "stills") and not re.search(r"\{(cut|still|n|tc|in)\}", t):
+        return t + "_{n}"
     return t
 
 
@@ -273,9 +281,13 @@ def normalize_profile(p: dict, source: str = "profile") -> dict:
     res = p.get("resolution")
     if res is not None and not (isinstance(res.get("width"), int) and isinstance(res.get("height"), int)):
         raise ValueError(f"Invalid profile in {source}: resolution must be {{width:int, height:int}}")
+    label = str(p.get("label") or default_label(p["name"]))
+    if not re.match(r"^[A-Za-z0-9][A-Za-z0-9_-]*$", label):
+        raise ValueError(f"Invalid profile in {source}: bad label {label!r}")
     return {
         "id": str(p["id"]),
         "name": str(p["name"]),
+        "label": label,
         "description": str(p.get("description") or ""),
         "target": target,
         "renderPreset": p.get("renderPreset") or None,
@@ -353,7 +365,7 @@ def build_render_settings(profile: dict, target_dir: str, custom_name: str, rng:
     return s
 
 
-def expand_items(profiles, targets, timeline_name, project_name, marks, template, out_dir, now=None):
+def expand_items(profiles, targets, timeline_name, project_name, marks, template, out_dir, now=None, underscore_spaces=False):
     """Pure expansion of one timeline into job items; mirrors src/batch.js expandItems()."""
     items, notes = [], []
     for prof in profiles:
@@ -363,13 +375,14 @@ def expand_items(profiles, targets, timeline_name, project_name, marks, template
         target_dir = os.path.join(out_dir, prof["subfolder"]) if prof["subfolder"] else out_dir
         ctx = {
             "project": project_name, "timeline": timeline_name, "profile": prof["id"], "profileName": prof["name"],
+            "label": prof.get("label") or default_label(prof["name"]),
             "format": prof["format"], "codec": prof["codec"],
             "width": (prof.get("resolution") or {}).get("width", ""),
             "height": (prof.get("resolution") or {}).get("height", ""),
         }
         if target == "timeline":
             items.append({"profile": prof, "timeline": timeline_name, "kind": "final", "targetDir": target_dir,
-                          "fileName": render_name(template or DEFAULT_TEMPLATE, ctx, now) + prof["fileSuffix"], "range": None, "mark": None})
+                          "fileName": render_name(template or DEFAULT_TEMPLATE, ctx, now, underscore_spaces) + prof["fileSuffix"], "range": None, "mark": None})
             continue
         kind = "cut" if target == "cuts" else "still"
         chosen = [m for m in marks if m["kind"] == kind]
@@ -381,7 +394,7 @@ def expand_items(profiles, targets, timeline_name, project_name, marks, template
         for m in chosen:
             n = f"{m['index']:02d}"
             name = render_name(tpl, {**ctx, "cut": n, "still": n, "n": n, "tc": tc_for_filename(m["tcIn"]),
-                                     "tcout": tc_for_filename(m["tcOut"]), "in": m["absIn"], "out": m["absOut"]}, now)
+                                     "tcout": tc_for_filename(m["tcOut"]), "in": m["absIn"], "out": m["absOut"]}, now, underscore_spaces)
             items.append({"profile": prof, "timeline": timeline_name, "kind": kind, "targetDir": target_dir,
                           "fileName": name + prof["fileSuffix"], "range": (m["absIn"], m["absOut"]), "mark": m})
     return items, notes
@@ -477,7 +490,7 @@ def apply_profile(project, profile: dict, target_dir: str, custom_name: str, rng
     return settings
 
 
-def queue_jobs(project, profiles, targets, out_dir: str, template: str, timelines=None, clear_queue=False, log=print):
+def queue_jobs(project, profiles, targets, out_dir: str, template: str, timelines=None, clear_queue=False, log=print, underscore_spaces=True):
     project_name = project.GetName()
     current_name, all_names = list_timelines(project)
     wanted = list(timelines) if timelines else ([current_name] if current_name else [])
@@ -497,7 +510,7 @@ def queue_jobs(project, profiles, targets, out_dir: str, template: str, timeline
         for tl_name in wanted:
             tl = timeline_by_name(project, tl_name)
             marks = timeline_marks(tl)[1] if needs_marks else []
-            items, tl_notes = expand_items(profiles, targets, tl_name, project_name, marks, template, out_dir)
+            items, tl_notes = expand_items(profiles, targets, tl_name, project_name, marks, template, out_dir, None, underscore_spaces)
             notes.extend(tl_notes)
             for n in tl_notes:
                 log(f"{n['profileName']}: {n['message']}")
@@ -564,7 +577,8 @@ def parse_args(argv):
     p.add_argument("--profiles-dir", action="append", default=[], help="extra profile directory (repeatable)")
     p.add_argument("-t", "--timeline", action="append", dest="timelines", help="timeline name (repeatable)")
     p.add_argument("--all-timelines", action="store_true", help="queue every timeline in the project")
-    p.add_argument("--name", default=os.environ.get("EXPORTX_TEMPLATE") or CONFIG["template"], help="filename template")
+    p.add_argument("--name", default=os.environ.get("EXPORTX_TEMPLATE") or CONFIG["template"], help="filename template (default {yymmdd}_{project}_{label})")
+    p.add_argument("--keep-spaces", action="store_true", help="keep spaces in file names instead of turning them into underscores")
     p.add_argument("--render", action="store_true", help="start rendering after queuing")
     p.add_argument("--wait", action="store_true", help="wait for rendering to finish (implies --render)")
     p.add_argument("--clear-queue", action="store_true", help="delete existing render jobs first")
@@ -583,6 +597,8 @@ def selftest() -> int:
     assert match_entry({"H.264": "H264"}, "av1") is None
     fixed = _dt.datetime(2026, 10, 17, 14, 5, 9)
     assert render_name("{timeline}_{profile}_{date}", {"timeline": "Main Edit", "profile": "h264-web"}, fixed) == "Main Edit_h264-web_20261017"
+    assert render_name(DEFAULT_TEMPLATE, {"project": "Spot A", "label": "Final"}, fixed, True) == "261017_Spot_A_Final"
+    assert default_label("Social cuts 9:16") == "Social"
     assert render_name("{timeline}:{nope}", {"timeline": "A/B"}, fixed) == "A_B"
     assert render_name("{nope}", {}, fixed) == "export"
     assert tc_to_frames("01:00:12:05", 24) == 86400 + 12 * 24 + 5
@@ -601,7 +617,7 @@ def selftest() -> int:
     by_id = {p["id"]: p for p in profs}
     items, notes = expand_items([by_id["final-4k-h265"], by_id["cuts-social-1080"], by_id["stills-tiff"]], TARGETS,
                                 "Main Edit", "P", marks, DEFAULT_TEMPLATE, "/out", fixed)
-    assert [i["fileName"] for i in items] == ["Main Edit_final-4k-h265_4K", "Main Edit_cuts-social-1080_cut01", "Main Edit_stills-tiff_still01"]
+    assert [i["fileName"] for i in items] == ["261017_P_Final", "261017_P_Social_01", "261017_P_Still_01"], [i["fileName"] for i in items]
     assert items[1]["range"] == (86424, 86471) and items[2]["range"] == (86500, 86500)
     still_settings = build_render_settings(by_id["stills-tiff"], "/out", "x", items[2]["range"])
     assert still_settings["ExportAudio"] is False and still_settings["MarkIn"] == still_settings["MarkOut"] == 86500
@@ -700,7 +716,8 @@ def main(argv=None) -> int:
     if args.all_timelines:
         timelines = list_timelines(project)[1]
 
-    jobs, errors, notes = queue_jobs(project, chosen, targets, out_dir, args.name, timelines, args.clear_queue)
+    jobs, errors, notes = queue_jobs(project, chosen, targets, out_dir, args.name, timelines, args.clear_queue,
+                                     underscore_spaces=not args.keep_spaces and CONFIG["underscore_spaces"])
     print(f"\nQueued {len(jobs)} job(s); {len(errors)} skipped; {len(notes)} note(s).")
     if not jobs:
         return 1

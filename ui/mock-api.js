@@ -13,7 +13,7 @@
 
   const FPS = 24;
   const START = 86400; // 01:00:00:00
-  const END = START + FPS * 60 * 3 - 1;
+  const END = START + FPS * 60 - 1; // one minute, like the bundled mock video
   const pad2 = (n) => String(n).padStart(2, '0');
   const tc = (abs) => {
     const n = Math.max(0, abs);
@@ -21,11 +21,33 @@
   };
   const dur = (frames) => `${(frames / FPS).toFixed(1)}s`;
 
-  const profiles = (window.__EXPORTX_PROFILES__ || []).map((p) => ({
+  const bundled = (window.__EXPORTX_PROFILES__ || []).map((p) => ({
     description: '', target: 'timeline', renderPreset: null, renderMode: 'single', resolution: null, frameRate: null,
-    settings: {}, subfolder: '', fileSuffix: '', enabledByDefault: true, tags: [], ...p,
-    source: '/Applications/ExportX/profiles/default.json',
+    settings: {}, subfolder: '', fileSuffix: '', enabledByDefault: true, tags: [], label: (p.name || 'Export').split(' ')[0], ...p,
+    source: '/Applications/ExportX/profiles/default.json', isUser: false, hasBundled: true,
   }));
+  const overrides = new Map();
+  const profileList = () => {
+    const byId = new Map(bundled.map((p) => [p.id, p]));
+    for (const [id, p] of overrides) byId.set(id, p);
+    return [...byId.values()];
+  };
+  let profiles = profileList();
+  const CAPS = {
+    presets: ['YouTube 1080p', 'Vimeo 4K', 'ProRes Master', 'Instagram Square'],
+    formats: [
+      { description: 'QuickTime', id: 'mov', codecs: [{ description: 'Apple ProRes 422 HQ', id: 'ProRes422HQ' }, { description: 'Apple ProRes 422', id: 'ProRes422' }, { description: 'Apple ProRes 422 LT', id: 'ProRes422LT' }, { description: 'Apple ProRes 4444', id: 'ProRes4444' }, { description: 'DNxHR HQX', id: 'DNxHR HQX' }, { description: 'H.264', id: 'H264' }, { description: 'H.265', id: 'H265' }] },
+      { description: 'MP4', id: 'mp4', codecs: [{ description: 'H.264', id: 'H264' }, { description: 'H.265', id: 'H265' }] },
+      { description: 'MXF OP1A', id: 'mxf_op1a', codecs: [{ description: 'DNxHR HQX', id: 'DNxHR HQX' }, { description: 'DNxHR HQ', id: 'DNxHR HQ' }] },
+      { description: 'TIFF', id: 'tif', codecs: [{ description: 'RGB 8 bits', id: 'RGB8' }, { description: 'RGB 16 bits', id: 'RGB16' }] },
+      { description: 'JPEG', id: 'jpg', codecs: [{ description: 'JPEG', id: 'JPEG' }] },
+      { description: 'PNG', id: 'png', codecs: [{ description: 'RGB 8 bits', id: 'RGB8' }, { description: 'RGB 16 bits', id: 'RGB16' }] },
+      { description: 'EXR', id: 'exr', codecs: [{ description: 'RGB half (PIZ)', id: 'RGBHalfPIZ' }] },
+    ],
+  };
+  const PREVIEW_URL = window.__EXPORTX_PREVIEW_VIDEO__ || null;
+  let previewReady = Boolean(PREVIEW_URL);
+  let previewTimer = null;
   const timelines = [
     { index: 1, name: 'Main Edit', current: true },
     { index: 2, name: 'Trailer 30s', current: false },
@@ -52,7 +74,7 @@
     return list;
   }
 
-  const listeners = { log: [], progress: [], done: [], playhead: [], marks: [] };
+  const listeners = { log: [], progress: [], done: [], playhead: [], marks: [], preview: [] };
   const sub = (k) => (cb) => {
     listeners[k].push(cb);
     return () => {
@@ -79,6 +101,12 @@
     const d = new Date();
     return `${d.getFullYear()}${pad2(d.getMonth() + 1)}${pad2(d.getDate())}`;
   };
+  const nameWith = (tpl, ctx, opts) => {
+    let out = name(tpl, ctx);
+    if (opts && opts.underscoreSpaces) out = out.replace(/\s+/g, '_').replace(/_{2,}/g, '_');
+    return out;
+  };
+  let settings = { targetDir: '/Volumes/Deliver/SpotA_Launch', nameTemplate: '{yymmdd}_{project}_{label}', underscoreSpaces: true, selectedProfiles: null, clearExisting: false, startRender: true };
 
   function plan(req) {
     const tls = req.timelines || ['Main Edit'];
@@ -91,10 +119,11 @@
         const p = profiles.find((x) => x.id === id);
         if (!p || !targets.includes(p.target)) continue;
         const dir = p.subfolder ? `${req.targetDir}/${p.subfolder}` : req.targetDir;
-        const ctx = { project: 'SpotA_Launch', timeline: tl, profile: p.id, profileName: p.name, format: p.format, codec: p.codec, width: p.resolution ? p.resolution.width : '', height: p.resolution ? p.resolution.height : '', date: today(), time: '101500' };
+        const ctx = { project: 'SpotA_Launch', timeline: tl, profile: p.id, profileName: p.name, label: p.label, format: p.format, codec: p.codec, width: p.resolution ? p.resolution.width : '', height: p.resolution ? p.resolution.height : '', date: today(), yymmdd: today().slice(2), time: '101500' };
         const base = { timeline: tl, profileId: p.id, profileName: p.name, target: p.target, targetDir: dir };
+        const opts = { underscoreSpaces: settings.underscoreSpaces !== false };
         if (p.target === 'timeline') {
-          items.push({ ...base, kind: 'final', fileName: name(req.nameTemplate, ctx) + (p.fileSuffix || ''), range: null, mark: null });
+          items.push({ ...base, kind: 'final', fileName: nameWith(req.nameTemplate, ctx, opts) + (p.fileSuffix || ''), range: null, mark: null });
           continue;
         }
         const kind = p.target === 'cuts' ? 'cut' : 'still';
@@ -104,12 +133,12 @@
           continue;
         }
         let tpl = req.nameTemplate;
-        if (!/\{(cut|n|tc|in|still)\}/.test(tpl)) tpl += kind === 'cut' ? '_cut{cut}' : '_still{still}';
+        if (!/\{(cut|n|tc|in|still)\}/.test(tpl)) tpl += '_{n}';
         for (const m of list) {
           const n = pad2(m.index);
           items.push({
             ...base, kind,
-            fileName: name(tpl, { ...ctx, cut: n, still: n, n, tc: m.tcIn.replace(/:/g, '.'), tcout: m.tcOut.replace(/:/g, '.'), in: m.absIn, out: m.absOut }) + (p.fileSuffix || ''),
+            fileName: nameWith(tpl, { ...ctx, cut: n, still: n, n, tc: m.tcIn.replace(/:/g, '.'), tcout: m.tcOut.replace(/:/g, '.'), in: m.absIn, out: m.absOut }, opts) + (p.fileSuffix || ''),
             range: { markIn: m.absIn, markOut: m.absOut },
             mark: { index: m.index, kind, tcIn: m.tcIn, tcOut: m.tcOut, duration: m.duration, durationFrames: m.durationFrames },
           });
@@ -161,21 +190,51 @@
 
   window.exportx = {
     status: async () => ({ connected: true, mock: true, product: 'DaVinci Resolve Studio', version: '20.1', project: 'SpotA_Launch', timeline: 'Main Edit', timelines, rendering: Boolean(renderTimer), userDir: '/Users/you/.exportx' }),
-    profiles: async () => ({ profiles, errors: [] }),
-    capabilities: async () => {
-      log('Formats: mov (QuickTime): ProRes422HQ, ProRes422, ProRes4444 · mp4 (MP4): H264, H265 · tif (TIFF): RGB8, RGB16 · jpg (JPEG): JPEG');
-      return { formats: [], presets: [] };
+    profiles: async () => ({ profiles: (profiles = profileList()), errors: [], userDir: '/Users/you/.exportx/profiles' }),
+    capabilities: async (opts) => {
+      if (!(opts && opts.quiet)) for (const f of CAPS.formats) log(`Format ${f.id} (${f.description}): ${f.codecs.map((c) => `${c.id} [${c.description}]`).join(', ')}`);
+      return CAPS;
+    },
+    saveProfile: async (raw) => {
+      const id = raw.id || raw.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+      const base = bundled.find((p) => p.id === id);
+      const p = { ...(base || {}), ...raw, id, isUser: true, hasBundled: Boolean(base), source: `/Users/you/.exportx/profiles/${id}.json` };
+      overrides.set(id, p);
+      log(`Saved deliverable "${p.name}" (preview only, not written to disk)`);
+      return { profiles: (profiles = profileList()), errors: [], userDir: '/Users/you/.exportx/profiles' };
+    },
+    deleteProfile: async (id) => { overrides.delete(id); return { profiles: (profiles = profileList()), errors: [], userDir: '/Users/you/.exportx/profiles' }; },
+    previewStatus: async () => ({ key: 'SpotA_Launch__Main_Edit', project: 'SpotA_Launch', timeline: 'Main Edit', fps: FPS, startFrame: START, endFrame: END, dropFrame: false, ready: previewReady, stale: false, file: previewReady ? PREVIEW_URL : null, renderedAt: previewReady ? new Date().toISOString() : null, width: 320, height: 180, rendering: previewTimer ? 50 : null }),
+    previewRender: async () => {
+      if (!PREVIEW_URL) throw new Error('This preview page has no sample video bundled');
+      previewReady = false;
+      let pct = 0;
+      emit('preview', { key: 'k', rendering: true, percent: 0 });
+      clearInterval(previewTimer);
+      previewTimer = setInterval(() => {
+        pct = Math.min(100, pct + 9);
+        emit('preview', { key: 'k', rendering: true, percent: pct });
+        if (pct >= 100) {
+          clearInterval(previewTimer);
+          previewTimer = null;
+          previewReady = true;
+          log('Preview ready (sample video)');
+          emit('preview', { key: 'k', rendering: false, ready: true, stale: false, file: PREVIEW_URL, fps: FPS, startFrame: START, endFrame: END, timeline: 'Main Edit' });
+        }
+      }, 250);
+      return { jobId: 'preview', key: 'k' };
     },
     pickFolder: async () => '/Volumes/Deliver/SpotA_Launch',
     openFolder: async () => { log('Would open the output folder'); return true; },
     openProfilesFolder: async () => { log('Would open ~/.exportx/profiles'); return true; },
     openProfileFile: async () => true,
     marks: async () => ({ info, marks: buildMarks() }),
-    markBegin: async () => { press = { absIn: playheadAbs, tc: tc(playheadAbs), fps: FPS, startedAt: Date.now(), timeline: 'Main Edit' }; return press; },
-    markEnd: async () => {
+    markBegin: async (at) => { const abs = at && Number.isFinite(Number(at.absFrame)) ? Math.round(Number(at.absFrame)) : playheadAbs; press = { absIn: abs, tc: tc(abs), fps: FPS, startedAt: Date.now(), timeline: 'Main Edit', source: at && at.absFrame != null ? 'preview' : 'resolve' }; return press; },
+    markEnd: async (at) => {
       if (!press) throw new Error('No press in progress');
-      const a = Math.min(press.absIn, playheadAbs);
-      const b = Math.max(press.absIn, playheadAbs);
+      const end = at && Number.isFinite(Number(at.absFrame)) ? Math.round(Number(at.absFrame)) : playheadAbs;
+      const a = Math.min(press.absIn, end);
+      const b = Math.max(press.absIn, end);
       press = null;
       const frames = b - a + 1;
       const kind = frames <= 7 ? 'still' : 'cut';
@@ -187,7 +246,7 @@
       return { info, marks, added };
     },
     markCancel: async () => { press = null; return true; },
-    markStill: async () => { markers[playheadAbs - START] = { kind: 'still', dur: 1 }; const marks = buildMarks(); return { info, marks, added: marks.find((m) => m.relIn === playheadAbs - START) }; },
+    markStill: async (at) => { const abs = at && Number.isFinite(Number(at.absFrame)) ? Math.round(Number(at.absFrame)) : playheadAbs; markers[abs - START] = { kind: 'still', dur: 1 }; const marks = buildMarks(); return { info, marks, added: marks.find((m) => m.relIn === abs - START) }; },
     markDelete: async (relIn) => { delete markers[relIn]; return { info, marks: buildMarks() }; },
     marksClear: async (kind) => { for (const k of Object.keys(markers)) if (!kind || markers[k].kind === kind) delete markers[k]; return { info, marks: buildMarks() }; },
     seek: async (abs) => { playheadAbs = abs; return tc(abs); },
@@ -211,9 +270,9 @@
       return true;
     },
     jobStatus: async () => jobs.map((j) => statuses.get(j.jobId)),
-    getSettings: async () => ({ targetDir: '/Volumes/Deliver/SpotA_Launch', nameTemplate: '{project}_{timeline}_{date}', selectedProfiles: null, clearExisting: false, startRender: true }),
-    saveSettings: async (s) => s,
+    getSettings: async () => ({ ...settings }),
+    saveSettings: async (s) => { settings = { ...settings, ...(s || {}) }; return { ...settings }; },
     logHistory: async () => [`${stamp()}Preview mode: this is a fake Resolve. Nothing is rendered.`, `${stamp()}Connected to DaVinci Resolve Studio 20.1 (preview)`],
-    onLog: sub('log'), onProgress: sub('progress'), onDone: sub('done'), onPlayhead: sub('playhead'), onMarks: sub('marks'),
+    onLog: sub('log'), onProgress: sub('progress'), onDone: sub('done'), onPlayhead: sub('playhead'), onMarks: sub('marks'), onPreview: sub('preview'),
   };
 })();

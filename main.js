@@ -20,11 +20,14 @@
 
 const path = require('path');
 const fs = require('fs');
+const { pathToFileURL } = require('url');
 const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
 
 const { ResolveBridge } = require('./src/resolve');
 const { BatchExporter, DEFAULT_TEMPLATE, TARGETS } = require('./src/batch');
 const { classifyPress } = require('./src/marks');
+const { framesToTc } = require('./src/timecode');
+const { sanitize } = require('./src/naming');
 const profilesLib = require('./src/profiles');
 
 const PLUGIN_ID = 'com.triptychvisuals.exportx';
@@ -34,10 +37,26 @@ const SETTINGS_FILE = path.join(USER_DIR, 'settings.json');
 const DEFAULT_SETTINGS = {
   targetDir: '',
   nameTemplate: DEFAULT_TEMPLATE,
+  underscoreSpaces: true,
   selectedProfiles: null,
   clearExisting: false,
   startRender: true,
   minCutSeconds: 0.3,
+};
+const PREVIEW_DIR = path.join(USER_DIR, 'previews');
+// The preview proxy: small, fast, same engine. Height follows the timeline's aspect ratio.
+const PREVIEW_PROFILE = {
+  id: 'exportx-preview',
+  name: 'ExportX preview proxy',
+  label: 'Preview',
+  target: 'timeline',
+  format: 'mp4',
+  codec: 'H264',
+  renderMode: 'single',
+  resolution: { width: 1280, height: 720 },
+  settings: { ExportVideo: true, ExportAudio: true, VideoQuality: 'Medium', AudioCodec: 'aac', AudioBitDepth: 16, AudioSampleRate: 48000, NetworkOptimization: true },
+  subfolder: '',
+  fileSuffix: '',
 };
 const PLAYHEAD_INTERVAL_MS = 150;
 const MARKS_INTERVAL_MS = 2000;
@@ -53,6 +72,7 @@ const state = {
   monitor: null,
   logBuffer: [],
   press: null,
+  preview: { rendering: false, jobId: null, key: null, percent: 0 },
   playhead: { timer: null, inFlight: false, info: null, infoAt: 0, last: null, marksAt: 0, marksKey: null },
 };
 
@@ -90,9 +110,14 @@ function writeSettings(partial) {
 }
 
 function loadProfiles() {
-  const { profiles, errors } = profilesLib.loadProfilesSafe(profilesLib.defaultProfileDirs());
+  const { profiles, errors } = profilesLib.loadProfilesWithOrigin();
   for (const e of errors) log(`Profile file skipped: ${e.message}`);
-  return { profiles, errors, dirs: profilesLib.defaultProfileDirs() };
+  return { profiles, errors, dirs: profilesLib.defaultProfileDirs(), userDir: profilesLib.userProfilesDir() };
+}
+
+function nameOptions() {
+  const s = readSettings();
+  return { underscoreSpaces: s.underscoreSpaces !== false };
 }
 
 function requireBridge() {
@@ -306,13 +331,32 @@ handle('exportx:status', async () => {
 
 handle('exportx:profiles', async () => loadProfiles());
 
-handle('exportx:capabilities', async () => {
+handle('exportx:capabilities', async (opts) => {
   const caps = await requireBridge().capabilities();
-  log(`Render presets: ${caps.presets.join(', ') || 'none'}`);
-  for (const f of caps.formats) {
-    log(`Format ${f.id} (${f.description}): ${f.codecs.map((c) => `${c.id} [${c.description}]`).join(', ')}`);
+  if (!(opts && opts.quiet)) {
+    log(`Render presets: ${caps.presets.join(', ') || 'none'}`);
+    for (const f of caps.formats) {
+      log(`Format ${f.id} (${f.description}): ${f.codecs.map((c) => `${c.id} [${c.description}]`).join(', ')}`);
+    }
   }
   return caps;
+});
+
+// ---------------------------------------------------------------- IPC: deliverable settings
+
+handle('exportx:save-profile', async (raw) => {
+  if (!raw || typeof raw !== 'object') throw new Error('Nothing to save');
+  const profile = { ...raw };
+  if (!profile.id) profile.id = profilesLib.slugify(profile.name || profile.label);
+  const saved = profilesLib.saveUserProfile(profile);
+  log(`Saved deliverable "${saved.name}" to ${profilesLib.userProfilePath(saved.id)}`);
+  return loadProfiles();
+});
+
+handle('exportx:delete-profile', async (id) => {
+  const removed = profilesLib.deleteUserProfile(String(id));
+  log(removed ? `Removed your copy of "${id}"` : `No user file for "${id}"`);
+  return loadProfiles();
 });
 
 handle('exportx:pick-folder', async (current) => {
@@ -366,11 +410,24 @@ handle('exportx:marks', async () => {
   return result;
 });
 
-handle('exportx:mark-begin', async () => {
-  const bridge = requireBridge();
+function clampFrame(n, info) {
+  return Math.min(info.endFrame, Math.max(info.startFrame, Math.round(n)));
+}
+
+/** Where a press happens: an explicit frame from the preview video, or Resolve's playhead. */
+async function pressFrame(at, info) {
+  if (at && Number.isFinite(Number(at.absFrame))) {
+    const absFrame = clampFrame(Number(at.absFrame), info);
+    return { absFrame, tc: framesToTc(absFrame, info.fps, info.dropFrame), source: 'preview' };
+  }
+  const pos = await requireBridge().playhead(info);
+  return { absFrame: pos.absFrame, tc: pos.tc, source: 'resolve' };
+}
+
+handle('exportx:mark-begin', async (at) => {
   const info = await currentInfo();
-  const pos = await bridge.playhead(info);
-  state.press = { absIn: pos.absFrame, tc: pos.tc, fps: info.fps, startedAt: Date.now(), timeline: info.name };
+  const pos = await pressFrame(at, info);
+  state.press = { absIn: pos.absFrame, tc: pos.tc, fps: info.fps, startedAt: Date.now(), timeline: info.name, source: pos.source };
   return state.press;
 });
 
@@ -379,14 +436,14 @@ handle('exportx:mark-cancel', async () => {
   return true;
 });
 
-handle('exportx:mark-end', async () => {
+handle('exportx:mark-end', async (at) => {
   const bridge = requireBridge();
   const press = state.press;
   state.press = null;
   if (!press) throw new Error('No press in progress');
   const info = await currentInfo();
   if (info.name !== press.timeline) throw new Error('The timeline changed during the press; mark discarded');
-  const pos = await bridge.playhead(info);
+  const pos = await pressFrame(at, info);
   const { minCutSeconds } = readSettings();
   const press2 = classifyPress({ absIn: press.absIn, absOut: pos.absFrame, fps: info.fps, minCutSeconds });
   const result = await bridge.addMark(press2);
@@ -396,10 +453,10 @@ handle('exportx:mark-end', async () => {
   return result;
 });
 
-handle('exportx:mark-still', async () => {
+handle('exportx:mark-still', async (at) => {
   const bridge = requireBridge();
   const info = await currentInfo();
-  const pos = await bridge.playhead(info);
+  const pos = await pressFrame(at, info);
   const result = await bridge.addMark({ kind: 'still', absIn: pos.absFrame, absOut: pos.absFrame });
   broadcastMarks(result);
   if (result.added) log(`Marked still ${result.added.index}: ${result.added.tcIn}`);
@@ -424,6 +481,130 @@ handle('exportx:seek', async (absFrame) => {
   return requireBridge().seek(Number(absFrame), info);
 });
 
+// ---------------------------------------------------------------- IPC: preview video
+
+function previewKey(project, timeline) {
+  return sanitize(`${project}__${timeline}`).replace(/\s+/g, '_');
+}
+
+function previewMetaPath(key) {
+  return path.join(PREVIEW_DIR, `${key}.json`);
+}
+
+function readPreviewMeta(key) {
+  try {
+    const meta = JSON.parse(fs.readFileSync(previewMetaPath(key), 'utf8'));
+    return meta && meta.file && fs.existsSync(meta.file) ? meta : null;
+  } catch (_err) {
+    return null;
+  }
+}
+
+function findPreviewOutput(key) {
+  if (!fs.existsSync(PREVIEW_DIR)) return null;
+  const candidates = fs
+    .readdirSync(PREVIEW_DIR)
+    .filter((f) => f.startsWith(key) && /\.(mp4|mov|m4v)$/i.test(f))
+    .map((f) => path.join(PREVIEW_DIR, f))
+    .sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs);
+  return candidates[0] || null;
+}
+
+async function previewStatus() {
+  const bridge = requireBridge();
+  const project = await bridge.projectName();
+  const info = await currentInfo();
+  const key = previewKey(project, info.name);
+  const meta = readPreviewMeta(key);
+  const stale = Boolean(meta && (meta.startFrame !== info.startFrame || meta.endFrame !== info.endFrame || Math.abs(meta.fps - info.fps) > 0.001));
+  return {
+    key,
+    project,
+    timeline: info.name,
+    fps: info.fps,
+    startFrame: info.startFrame,
+    endFrame: info.endFrame,
+    dropFrame: info.dropFrame,
+    ready: Boolean(meta),
+    stale,
+    file: meta ? pathToFileURL(meta.file).href : null,
+    renderedAt: meta ? meta.renderedAt : null,
+    width: meta ? meta.width : null,
+    height: meta ? meta.height : null,
+    rendering: state.preview.rendering && state.preview.key === key ? state.preview.percent : null,
+  };
+}
+
+handle('exportx:preview-status', async () => previewStatus());
+
+handle('exportx:preview-render', async () => {
+  const bridge = requireBridge();
+  const exporter = requireExporter();
+  if (state.preview.rendering) throw new Error('A preview is already rendering');
+  if (await bridge.isRendering()) throw new Error('Resolve is already rendering. Wait for it to finish, then render the preview.');
+  const project = await bridge.projectName();
+  const info = await currentInfo(true);
+  const key = previewKey(project, info.name);
+  ensureDir(PREVIEW_DIR);
+  const old = readPreviewMeta(key);
+  if (old) {
+    try {
+      fs.unlinkSync(old.file);
+    } catch (_err) {
+      /* ignore */
+    }
+  }
+  const tl = await bridge.currentTimeline();
+  const tlW = Number(await tl.GetSetting('timelineResolutionWidth')) || 1920;
+  const tlH = Number(await tl.GetSetting('timelineResolutionHeight')) || 1080;
+  const width = 1280;
+  const height = Math.max(2, Math.round((width * tlH) / tlW / 2) * 2);
+  const profile = { ...PREVIEW_PROFILE, resolution: { width, height } };
+  await bridge.applyProfile(profile, { targetDir: PREVIEW_DIR, customName: key });
+  const jobId = await bridge.addRenderJob();
+  const ok = await bridge.startRendering([jobId]);
+  if (!ok) throw new Error('Resolve refused to start the preview render');
+  state.preview = { rendering: true, jobId, key, percent: 0 };
+  log(`Rendering preview of "${info.name}" (${width}×${height} H.264) → ${PREVIEW_DIR}`);
+  send('exportx:preview', { key, rendering: true, percent: 0 });
+  exporter
+    .waitForCompletion([jobId], {
+      intervalMs: 1000,
+      onProgress: (statuses) => {
+        state.preview.percent = statuses[0] ? statuses[0].percent : 0;
+        send('exportx:preview', { key, rendering: true, percent: state.preview.percent });
+      },
+    })
+    .then(async ({ statuses }) => {
+      state.preview.rendering = false;
+      const st = statuses[0] || { status: 'unknown' };
+      if (st.status !== 'complete') {
+        log(`Preview render ${st.status}${st.error ? `: ${st.error}` : ''}`);
+        send('exportx:preview', { key, rendering: false, error: st.error || `Preview render ${st.status}` });
+        return;
+      }
+      const file = findPreviewOutput(key);
+      if (!file) {
+        send('exportx:preview', { key, rendering: false, error: `Preview rendered but no file was found in ${PREVIEW_DIR}` });
+        return;
+      }
+      const meta = { file, project, timeline: info.name, startFrame: info.startFrame, endFrame: info.endFrame, fps: info.fps, dropFrame: info.dropFrame, width, height, renderedAt: new Date().toISOString() };
+      fs.writeFileSync(previewMetaPath(key), JSON.stringify(meta, null, 2));
+      try {
+        await bridge.deleteRenderJob(jobId);
+      } catch (_err) {
+        /* leave it in the queue */
+      }
+      log(`Preview ready: ${file}`);
+      send('exportx:preview', { key, rendering: false, ready: true, stale: false, file: pathToFileURL(file).href, ...meta });
+    })
+    .catch((err) => {
+      state.preview.rendering = false;
+      send('exportx:preview', { key, rendering: false, error: err.message });
+    });
+  return { jobId, key };
+});
+
 // ---------------------------------------------------------------- IPC: plan, queue, render
 
 function selectProfiles(ids) {
@@ -443,6 +624,7 @@ function toRequest(req) {
     targets: targets.length ? targets : TARGETS,
     targetDir: r.targetDir || '',
     nameTemplate: r.nameTemplate || DEFAULT_TEMPLATE,
+    nameOptions: nameOptions(),
     timelines: Array.isArray(r.timelines) && r.timelines.length ? r.timelines : null,
     clearExisting: Boolean(r.clearExisting),
   };

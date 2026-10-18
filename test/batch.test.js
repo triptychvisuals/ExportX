@@ -104,12 +104,31 @@ test('buildRenderSettings merges profile settings with run options', () => {
   assert.equal(still.ExportAudio, false);
 });
 
-test('ensureUniqueToken appends a counter only when the template lacks one', () => {
-  assert.equal(ensureUniqueToken('{timeline}_{profile}', 'cuts'), '{timeline}_{profile}_cut{cut}');
-  assert.equal(ensureUniqueToken('{timeline}_{profile}', 'stills'), '{timeline}_{profile}_still{still}');
+test('ensureUniqueToken appends a number only when the template lacks a per-mark token', () => {
+  assert.equal(ensureUniqueToken('{timeline}_{profile}', 'cuts'), '{timeline}_{profile}_{n}');
+  assert.equal(ensureUniqueToken('{timeline}_{profile}', 'stills'), '{timeline}_{profile}_{n}');
   assert.equal(ensureUniqueToken('{timeline}_{tc}', 'cuts'), '{timeline}_{tc}');
   assert.equal(ensureUniqueToken('{timeline}_{n}', 'stills'), '{timeline}_{n}');
   assert.equal(ensureUniqueToken('{timeline}', 'timeline'), '{timeline}');
+});
+
+test('the default convention names finals, cuts and stills by label', () => {
+  const marks = [
+    { kind: 'cut', index: 1, absIn: 10, absOut: 20, tcIn: '01:00:00:10', tcOut: '01:00:00:20', duration: '0.5s', durationFrames: 11 },
+    { kind: 'still', index: 1, absIn: 40, absOut: 40, tcIn: '01:00:01:16', tcOut: '01:00:01:16', duration: '0.0s', durationFrames: 1 },
+  ];
+  const profiles = [
+    { ...PRORES, label: 'Master', fileSuffix: '' },
+    { ...CUTS, label: 'Social' },
+    { ...STILLS, label: 'Still' },
+  ];
+  const { items } = expandItems({ profiles, timelineName: 'Main Edit', projectName: 'Spot A', marks, targetDir: '/o', now: new Date(2025, 9, 18), nameOptions: { underscoreSpaces: true } });
+  assert.deepEqual(
+    items.map((i) => i.fileName),
+    ['251018_Spot_A_Master', '251018_Spot_A_Social_01', '251018_Spot_A_Still_01'],
+  );
+  const kept = expandItems({ profiles, timelineName: 'Main Edit', projectName: 'Spot A', marks, targetDir: '/o', now: new Date(2025, 9, 18) });
+  assert.equal(kept.items[0].fileName, '251018_Spot A_Master');
 });
 
 test('queues one job per profile for the current timeline', async () => {
@@ -143,12 +162,12 @@ test('queues one job per profile for the current timeline', async () => {
 
 test('cuts and stills expand from the timeline markers into ranged jobs', async () => {
   const { project, exporter } = setup({ timelines: [MARKED_TIMELINE, 'Trailer'] });
-  const { jobs, errors, notes } = await exporter.queue({ profiles: [CUTS, STILLS], targetDir: '/out' });
+  const { jobs, errors, notes } = await exporter.queue({ profiles: [CUTS, STILLS], targetDir: '/out', nameTemplate: '{timeline}_{profile}' });
   assert.equal(errors.length, 0);
   assert.equal(notes.length, 0);
   assert.deepEqual(
     jobs.map((j) => `${j.kind}:${j.fileName}`),
-    ['cut:Main Edit_cuts-social_cut01', 'cut:Main Edit_cuts-social_cut02', 'still:Main Edit_stills-tiff_still01'],
+    ['cut:Main Edit_cuts-social_01', 'cut:Main Edit_cuts-social_02', 'still:Main Edit_stills-tiff_01'],
   );
   const queued = project.GetRenderJobList();
   assert.equal(queued[0].settings.SelectAllFrames, false);
@@ -241,7 +260,7 @@ test('clearExisting empties the queue first', async () => {
   const { project, exporter } = setup();
   project.AddRenderJob();
   assert.equal(project.GetRenderJobList().length, 1);
-  await exporter.queue({ profiles: [H264], targetDir: '/out', clearExisting: true });
+  await exporter.queue({ profiles: [H264], targetDir: '/out', clearExisting: true, nameTemplate: '{timeline}_{profile}' });
   assert.equal(project.GetRenderJobList().length, 1);
   assert.equal(project.GetRenderJobList()[0].OutputFilename, 'Main Edit_h264-web');
 });

@@ -72,7 +72,8 @@ Marker colours: Blue, Cyan, Green, Yellow, Red, Pink, Purple, Fuchsia, Rose, Lav
 - `StartRendering` returns `false` if a render is already running.
 - `isInteractiveMode=true` shows Resolve's render progress UI and prompts; ExportX uses `false` and polls `GetRenderJobStatus` itself.
 - `FormatWidth`/`FormatHeight` change the output size; how a mismatched aspect ratio is handled follows the project's image scaling settings.
-- There is no play/pause call in the scripting API. ExportX polls `GetCurrentTimecode()` to show the playhead and detect motion; the user starts playback in Resolve.
+- There is no play/pause call in the scripting API, and no way to read viewer frames. ExportX polls `GetCurrentTimecode()` to show Resolve's playhead, and for an in-panel picture it renders a small proxy of the timeline through the same render queue and plays that file.
+- `timelineResolutionWidth` / `timelineResolutionHeight` (via `Timeline.GetSetting`) give the aspect ratio for the preview proxy.
 - Codec and format ids differ by OS and Resolve version. Match loosely and offer the user the list (`capabilities()` in `src/resolve.js`).
 
 ## Workflow Integration plugin host

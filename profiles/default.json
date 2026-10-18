@@ -3,6 +3,7 @@
     {
       "id": "final-prores-master",
       "name": "Master",
+      "label": "Master",
       "description": "The whole timeline as a ProRes 422 HQ QuickTime at the timeline's resolution. Keep this one.",
       "target": "timeline",
       "format": "mov",
@@ -16,7 +17,6 @@
         "AudioSampleRate": 48000
       },
       "subfolder": "01_Masters",
-      "fileSuffix": "_MASTER",
       "tags": [
         "final",
         "master"
@@ -25,6 +25,7 @@
     {
       "id": "final-4k-h265",
       "name": "Final 4K",
+      "label": "Final",
       "description": "The whole timeline as a 3840x2160 H.265 MP4 for delivery and uploads.",
       "target": "timeline",
       "format": "mp4",
@@ -44,7 +45,6 @@
         "NetworkOptimization": true
       },
       "subfolder": "02_Final",
-      "fileSuffix": "_4K",
       "tags": [
         "final",
         "4k"
@@ -53,6 +53,7 @@
     {
       "id": "final-1080-h264",
       "name": "Web 1080p",
+      "label": "Web",
       "description": "The whole timeline as a 1920x1080 H.264 MP4 for review links, YouTube and Vimeo.",
       "target": "timeline",
       "format": "mp4",
@@ -72,7 +73,6 @@
         "NetworkOptimization": true
       },
       "subfolder": "02_Final",
-      "fileSuffix": "_1080",
       "tags": [
         "final",
         "web"
@@ -81,6 +81,7 @@
     {
       "id": "cuts-social-1080",
       "name": "Social cuts",
+      "label": "Social",
       "description": "One 1920x1080 H.264 MP4 for every cut you marked.",
       "target": "cuts",
       "format": "mp4",
@@ -100,7 +101,6 @@
         "NetworkOptimization": true
       },
       "subfolder": "04_Social",
-      "fileSuffix": "",
       "tags": [
         "social",
         "cuts"
@@ -109,6 +109,7 @@
     {
       "id": "cuts-social-vertical",
       "name": "Social cuts 9:16",
+      "label": "Social9x16",
       "description": "One 1080x1920 H.264 MP4 for every cut you marked. Best from a vertical timeline; a 16:9 timeline is scaled per the project's image scaling setting.",
       "target": "cuts",
       "format": "mp4",
@@ -127,7 +128,6 @@
         "AudioSampleRate": 48000
       },
       "subfolder": "04_Social/9x16",
-      "fileSuffix": "_9x16",
       "enabledByDefault": false,
       "tags": [
         "social",
@@ -137,6 +137,7 @@
     {
       "id": "stills-tiff",
       "name": "Stills TIFF",
+      "label": "Still",
       "description": "One full-resolution TIFF for every still you marked. Resolve adds the frame number to the file name.",
       "target": "stills",
       "format": "tif",
@@ -146,7 +147,6 @@
         "ExportVideo": true
       },
       "subfolder": "06_Stills",
-      "fileSuffix": "",
       "tags": [
         "stills"
       ]
@@ -154,6 +154,7 @@
     {
       "id": "stills-jpeg",
       "name": "Stills JPEG",
+      "label": "Still",
       "description": "One JPEG for every still you marked, for quick sharing.",
       "target": "stills",
       "format": "jpg",
@@ -163,7 +164,6 @@
         "ExportVideo": true
       },
       "subfolder": "06_Stills/JPEG",
-      "fileSuffix": "",
       "enabledByDefault": false,
       "tags": [
         "stills"
@@ -172,6 +172,7 @@
     {
       "id": "review-proxy",
       "name": "Review proxy 720p",
+      "label": "Review",
       "description": "The whole timeline as a small 1280x720 H.264 MP4 for quick review links.",
       "target": "timeline",
       "format": "mp4",
@@ -191,7 +192,6 @@
         "NetworkOptimization": true
       },
       "subfolder": "03_Review",
-      "fileSuffix": "_REVIEW",
       "enabledByDefault": false,
       "tags": [
         "review"
@@ -200,6 +200,7 @@
     {
       "id": "clips-prores",
       "name": "Individual clips",
+      "label": "Clip",
       "description": "One ProRes 422 file per timeline clip, for handoff to VFX or re-edits.",
       "target": "timeline",
       "format": "mov",

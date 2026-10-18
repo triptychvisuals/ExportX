@@ -19,18 +19,24 @@ contextBridge.exposeInMainWorld('exportx', {
   // connection and catalogue
   status: () => invoke('exportx:status'),
   profiles: () => invoke('exportx:profiles'),
-  capabilities: () => invoke('exportx:capabilities'),
+  capabilities: (opts) => invoke('exportx:capabilities', opts),
+  // deliverable settings (user profile files)
+  saveProfile: (profile) => invoke('exportx:save-profile', profile),
+  deleteProfile: (id) => invoke('exportx:delete-profile', id),
   // folders and files
   pickFolder: (current) => invoke('exportx:pick-folder', current),
   openFolder: (dir) => invoke('exportx:open-folder', dir),
   openProfilesFolder: () => invoke('exportx:open-profiles-folder'),
   openProfileFile: (profileId) => invoke('exportx:open-profile-file', profileId),
+  // preview video (a 720p proxy of the current timeline, rendered by Resolve)
+  previewStatus: () => invoke('exportx:preview-status'),
+  previewRender: () => invoke('exportx:preview-render'),
   // capture: cuts and stills as timeline markers
   marks: () => invoke('exportx:marks'),
-  markBegin: () => invoke('exportx:mark-begin'),
-  markEnd: () => invoke('exportx:mark-end'),
+  markBegin: (at) => invoke('exportx:mark-begin', at),
+  markEnd: (at) => invoke('exportx:mark-end', at),
   markCancel: () => invoke('exportx:mark-cancel'),
-  markStill: () => invoke('exportx:mark-still'),
+  markStill: (at) => invoke('exportx:mark-still', at),
   markDelete: (relIn) => invoke('exportx:mark-delete', relIn),
   marksClear: (kind) => invoke('exportx:marks-clear', kind),
   seek: (absFrame) => invoke('exportx:seek', absFrame),
@@ -50,4 +56,5 @@ contextBridge.exposeInMainWorld('exportx', {
   onDone: (cb) => subscribe('exportx:done', cb),
   onPlayhead: (cb) => subscribe('exportx:playhead', cb),
   onMarks: (cb) => subscribe('exportx:marks', cb),
+  onPreview: (cb) => subscribe('exportx:preview', cb),
 });

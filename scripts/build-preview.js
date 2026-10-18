@@ -22,6 +22,8 @@ const renderer = read('ui/renderer.js');
 const mock = read('ui/mock-api.js');
 const profiles = JSON.parse(read('profiles/default.json')).profiles;
 const version = JSON.parse(read('package.json')).version;
+const videoPath = path.join(root, 'ui', 'mock-preview.webm');
+const videoUri = fs.existsSync(videoPath) ? `data:video/webm;base64,${fs.readFileSync(videoPath).toString('base64')}` : null;
 
 // Fonts: the plugin bundles woff2 files; the preview loads the same faces from Google Fonts.
 css = css.replace(/@font-face\s*\{[^}]*\}\s*/g, '');
@@ -32,12 +34,12 @@ const fontsLink =
 const body = html.slice(html.indexOf('<body>') + '<body>'.length, html.lastIndexOf('</body>')).replace(/<script src="renderer.js"><\/script>\s*/, '');
 
 const note =
-  '<div class="preview-note" role="note">Preview with a fake Resolve. The timeline is playing: hold the pad to mark a cut, tap it for a still, then press Export. Nothing is rendered.</div>\n';
+  '<div class="preview-note" role="note">Preview with a fake Resolve and a test-pattern video standing in for your timeline. Hold the pad to mark a cut, tap it for a still, press Export, and try the Settings tab. Nothing is rendered or saved.</div>\n';
 const noteCss =
   '.preview-note{background:var(--x-surface);color:var(--x-text-2);border-bottom:1px solid var(--x-line);font-size:12px;padding:8px max(16px,env(safe-area-inset-right,0px)) 8px max(16px,env(safe-area-inset-left,0px));text-align:center}';
 
 const scripts =
-  `<script>window.__EXPORTX_PROFILES__ = ${JSON.stringify(profiles)};</script>\n` +
+  `<script>window.__EXPORTX_PROFILES__ = ${JSON.stringify(profiles)};${videoUri ? ` window.__EXPORTX_PREVIEW_VIDEO__ = ${JSON.stringify(videoUri)};` : ''}</script>\n` +
   `<script>\n${mock}\n</script>\n` +
   `<script>\n${renderer}\n</script>`;
 

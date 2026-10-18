@@ -12,7 +12,7 @@ The first pass copied Editor X's workspace literally: a tools rail, a canvas, an
 2. **Mark while it plays**: the playhead, one big pad, two short lists.
 3. **Export**: one big button, two small ones, progress.
 
-Everything that is sometimes useful but never needed to understand the tool (file-name pattern, other timelines, queue-only, profile files, formats list, the log) sits under a single **More options** fold at the bottom. Nothing was removed from the plugin; it was moved out of the first read.
+Everything that is set up once and then left alone (file-name pattern, the deliverables themselves, other timelines, the log) lives in a second tab, **Settings**. Nothing was removed from the plugin; it was moved out of the first read. Step 2 later gained a **preview video** above the pad, because marking blind against Resolve's viewer in another window was the one place the three steps still asked the user to look away.
 
 Rules that came out of the rewrite:
 
@@ -77,10 +77,14 @@ Type scale: 10.5 px tracked uppercase labels, 12–13 px UI text, 14 px delivera
 - **Progress line** 2 px under the top bar, sticky with it. Width is the batch percentage; green when complete, red when any job failed.
 - **Step title** a 24 px white disc with the step number, then the title in display type.
 - **Choice row** 40 px: 18 px tick (accent when on), name (14 px / 500) with an optional `per cut` / `per still` tag in the mark colour, and a monospace codec summary at the right (hidden at phone width).
+- **Viewer** a 16:9 black box (capped at 34 % of the window height) above the pad. Empty state: one sentence, a `Render preview` button, one line of explanation. Rendering: a thin bar. Ready: the video, a big centred play glyph when paused, a **scrub bar** whose track shows cuts as cyan blocks and stills as pink ticks, and a transport row (play, mute, the preview's timecode, where marks come from, `re-render`, `mark from Resolve instead`). A stale preview gets an amber note in the corner.
 - **Pad** full width, 128 px tall, `Hold for a cut` / `Tap for a still`. Holding: accent fill, `IN <tc> · <elapsed>` along the bottom, 1 % scale-down. Flash: cyan or pink for 220 ms. Disabled at 40 % when not connected.
 - **Mark row** 28 px monospace: coloured dot and number, `in → out` and duration (cuts) or the frame's timecode (stills), `×` to remove. Click moves the playhead. `clear` asks for a second click within four seconds instead of a dialog.
 - **Export** one 48 px accent pill (`Export everything · 6 files`), `Cuts only` / `Stills only` pills, a summary line (`3 final exports · 2 cuts · 1 still → folder`), then a 4 px bar with `17% · 1 of 6 done` and a compact file list with status dots.
-- **More options** a `<details>` fold: file-name pattern with token chips, timeline chips, two switches, utility buttons, and the log.
+- **Tabs** a two-segment pill in the top bar, `Export` and `Settings`; the active segment is white on black like the timeline chips.
+- **Settings › File names** the pattern field, token chips, the spaces switch, and a live example line that uses the real project name.
+- **Settings › Deliverables** one collapsed card per deliverable (name, tag, monospace summary, `edited`/`custom` badge). Open, it is a two-column form: Name, Label, Applies to, Deliver preset, Format, Codec (both filled from Resolve's lists), Size, Quality, Folder, two switches, then `Save`, `Duplicate`, `Reset to default` or `Delete`, `Open JSON`. Destructive actions ask for a second click instead of a dialog.
+- **Settings › Advanced** timeline chips, two switches, the formats button, the log.
 
 ## 5. States
 

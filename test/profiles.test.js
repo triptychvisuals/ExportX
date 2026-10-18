@@ -66,6 +66,44 @@ test('rejects malformed profiles with a useful message', () => {
   assert.equal(profiles.validateProfile({ id: 'y', name: 'Y', format: 'mp4', codec: 'H264' }).target, 'timeline');
 });
 
+test('labels default to the first word and must be filename-safe', () => {
+  assert.equal(profiles.validateProfile({ id: 'x', name: 'Social cuts', format: 'mp4', codec: 'H264' }).label, 'Social');
+  assert.equal(profiles.validateProfile({ id: 'x', name: 'Final 4K', label: 'Final', format: 'mp4', codec: 'H264' }).label, 'Final');
+  assert.throws(() => profiles.validateProfile({ id: 'x', name: 'X', label: 'Fin al', format: 'mp4', codec: 'H264' }), /label/);
+  for (const p of profiles.loadProfiles([profiles.bundledProfilesDir()])) assert.match(p.label, /^[A-Za-z0-9_-]+$/);
+});
+
+test('user profiles save to EXPORTX_HOME, override bundled ones, and can be removed again', () => {
+  const home = tmpDir();
+  const prev = process.env.EXPORTX_HOME;
+  process.env.EXPORTX_HOME = home;
+  try {
+    const before = profiles.loadProfilesWithOrigin().profiles.find((p) => p.id === 'final-4k-h265');
+    assert.equal(before.isUser, false);
+    assert.equal(before.hasBundled, true);
+    const saved = profiles.saveUserProfile({ ...before, codec: 'H264', label: 'Final' });
+    assert.equal(saved.codec, 'H264');
+    assert.ok(fs.existsSync(profiles.userProfilePath('final-4k-h265')));
+    const after = profiles.loadProfilesWithOrigin().profiles.find((p) => p.id === 'final-4k-h265');
+    assert.equal(after.isUser, true);
+    assert.equal(after.hasBundled, true);
+    assert.equal(after.codec, 'H264');
+    const written = JSON.parse(fs.readFileSync(profiles.userProfilePath('final-4k-h265'), 'utf8'));
+    assert.equal(written.source, undefined);
+    assert.equal(written.isUser, undefined);
+    assert.equal(profiles.deleteUserProfile('final-4k-h265'), true);
+    assert.equal(profiles.deleteUserProfile('final-4k-h265'), false);
+    const restored = profiles.loadProfilesWithOrigin().profiles.find((p) => p.id === 'final-4k-h265');
+    assert.equal(restored.isUser, false);
+    assert.equal(restored.codec, 'H265');
+    assert.throws(() => profiles.saveUserProfile({ id: 'bad id', name: 'B', format: 'mp4', codec: 'H264' }), /may only contain/);
+    assert.equal(profiles.slugify('Client HEVC 10-bit!'), 'client-hevc-10-bit');
+  } finally {
+    if (prev === undefined) delete process.env.EXPORTX_HOME;
+    else process.env.EXPORTX_HOME = prev;
+  }
+});
+
 test('loadProfilesSafe reports broken files without dropping good ones', () => {
   const dir = tmpDir();
   fs.writeFileSync(path.join(dir, 'good.json'), JSON.stringify({ id: 'good', name: 'G', format: 'mp4', codec: 'H264' }));

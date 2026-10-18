@@ -19,6 +19,7 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { defaultLabel } = require('./naming');
 
 const REQUIRED = ['id', 'name', 'format', 'codec'];
 const RENDER_MODES = ['single', 'individual'];
@@ -40,6 +41,7 @@ function normalize(p) {
   return {
     id: String(p.id),
     name: String(p.name),
+    label: p.label ? String(p.label) : defaultLabel(p.name),
     description: p.description ? String(p.description) : '',
     renderPreset: p.renderPreset ? String(p.renderPreset) : null,
     format: String(p.format),
@@ -68,6 +70,9 @@ function validateProfile(p, source = 'profile') {
   }
   if (p.id && !/^[a-z0-9][a-z0-9_-]*$/i.test(String(p.id))) {
     errors.push(`id "${p.id}" may only contain letters, digits, "-" and "_"`);
+  }
+  if (p.label !== undefined && p.label !== null && !/^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(String(p.label))) {
+    errors.push(`label "${p.label}" may only contain letters, digits, "-" and "_"`);
   }
   if (p.renderMode && !RENDER_MODES.includes(p.renderMode)) {
     errors.push(`renderMode must be one of ${RENDER_MODES.join(', ')}`);
@@ -154,6 +159,45 @@ function defaultProfileDirs() {
   return [bundledProfilesDir(), userProfilesDir()];
 }
 
+/** Profiles with provenance: isUser (lives in the user folder) and hasBundled (a bundled one with the same id exists). */
+function loadProfilesWithOrigin() {
+  const bundled = loadProfilesSafe([bundledProfilesDir()]);
+  const user = loadProfilesSafe([userProfilesDir()]);
+  const bundledIds = new Set(bundled.profiles.map((p) => p.id));
+  const byId = new Map();
+  for (const p of bundled.profiles) byId.set(p.id, { ...p, isUser: false, hasBundled: true });
+  for (const p of user.profiles) byId.set(p.id, { ...p, isUser: true, hasBundled: bundledIds.has(p.id) });
+  return { profiles: [...byId.values()], errors: [...bundled.errors, ...user.errors] };
+}
+
+function userProfilePath(id) {
+  return path.join(userProfilesDir(), `${id}.json`);
+}
+
+/** Validate and write one profile to the user folder (overrides a bundled one with the same id). */
+function saveUserProfile(raw) {
+  const profile = validateProfile(raw, 'settings');
+  fs.mkdirSync(userProfilesDir(), { recursive: true });
+  const { source, isUser, hasBundled, ...clean } = profile; // eslint-disable-line no-unused-vars
+  fs.writeFileSync(userProfilePath(profile.id), JSON.stringify(clean, null, 2) + '\n');
+  return profile;
+}
+
+/** Remove a user profile file; a bundled profile with that id comes back. Returns true if a file was removed. */
+function deleteUserProfile(id) {
+  const file = userProfilePath(id);
+  if (!fs.existsSync(file)) return false;
+  fs.unlinkSync(file);
+  return true;
+}
+
+function slugify(text) {
+  return String(text ?? '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '') || 'deliverable';
+}
+
 module.exports = {
   TARGETS,
   userDir,
@@ -166,4 +210,9 @@ module.exports = {
   loadProfilesFromDir,
   loadProfiles,
   loadProfilesSafe,
+  loadProfilesWithOrigin,
+  userProfilePath,
+  saveUserProfile,
+  deleteUserProfile,
+  slugify,
 };
