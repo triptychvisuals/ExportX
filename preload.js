@@ -48,6 +48,7 @@ contextBridge.exposeInMainWorld('exportx', {
   jobStatus: (jobIds) => invoke('exportx:job-status', jobIds),
   // portal (Triptych Studios or any server implementing portal-kit/)
   portalTest: (opts) => invoke('exportx:portal-test', opts),
+  portalProjects: () => invoke('exportx:portal-projects'),
   portalUpload: (opts) => invoke('exportx:portal-upload', opts),
   openUrl: (url) => invoke('exportx:open-url', url),
   // settings and log

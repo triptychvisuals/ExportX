@@ -174,6 +174,12 @@ input[type='text']:focus { outline: none; border-color: var(--x-accent); }
 .export-bar .btn.big + .row { margin-top: 8px; }
 .export-bar .hint { min-height: 18px; margin-top: 8px; }
 .export-bar .upload-switch { display: flex; margin-top: 10px; }
+.export-bar .portal-project { display: flex; align-items: center; gap: 6px; margin-top: 8px; }
+.portal-project label { color: var(--x-text-2); font-size: 12px; flex: none; }
+.portal-project select { flex: 1; min-width: 0; height: 30px; padding: 0 8px; border-radius: var(--x-radius); border: 1px solid var(--x-line-2); background: var(--x-surface-2); color: var(--x-text); font: 12.5px var(--x-font-ui); }
+.portal-project select:focus { outline: none; border-color: var(--x-accent); }
+.portal-project.missing select { border-color: var(--x-warn); }
+.portal-project .icon-btn { width: 30px; height: 30px; border: 1px solid var(--x-line-2); border-radius: var(--x-radius); }
 .export-bar .hint.bg { min-height: 0; margin-top: 6px; font-size: 11.5px; }
 
 .right {

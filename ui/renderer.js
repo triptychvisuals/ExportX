@@ -76,8 +76,10 @@
     portalToken: $('portal-token'),
     btnPortalTest: $('btn-portal-test'),
     portalResult: $('portal-result'),
-    portalCategory: $('portal-category'),
     optPortalAuto: $('opt-portal-auto'),
+    portalProjectRow: $('portal-project-row'),
+    portalProject: $('portal-project'),
+    btnPortalRefresh: $('btn-portal-refresh'),
     // settings
     nameTemplate: $('name-template'),
     tokens: $('tokens'),
@@ -125,7 +127,7 @@
     resolvePlayhead: null,
     preview: { status: null, source: 'preview', mediaTime: null, loadedFile: null, rvfc: 0, seekTimer: null },
     lastSummary: null,
-    portal: { url: '', tokenSet: false, name: '', categories: [] },
+    portal: { url: '', tokenSet: false, name: '', projects: [], projectId: '', byResolve: {}, loading: false, loadError: '' },
     upload: { running: false, files: new Map(), result: null, error: null, total: 0, percentTotal: 0 },
   };
 
@@ -227,6 +229,7 @@
       clearExisting: el.optClear.checked,
       startRender: Boolean(startRender),
       upload: portalConfigured() ? el.optUpload.checked : undefined,
+      portalProjectId: uploadWanted() ? state.portal.projectId || undefined : undefined,
     };
   }
 
@@ -236,7 +239,8 @@
   }
 
   function updateButtons() {
-    const ready = isConnected() && el.targetDir.value.trim().length > 0 && !state.busy && !state.rendering;
+    const needProject = uploadWanted() && !state.portal.projectId;
+    const ready = isConnected() && el.targetDir.value.trim().length > 0 && !state.busy && !state.rendering && !needProject;
     const cuts = state.marks.filter((m) => m.kind === 'cut').length;
     const stills = state.marks.filter((m) => m.kind === 'still').length;
     el.btnGo.disabled = !(ready && state.plan.items.length > 0);
@@ -250,6 +254,8 @@
     const n = state.plan.items.length;
     const verb = el.optStart.checked ? 'Export' : 'Queue';
     el.btnGo.textContent = n ? `${verb} everything · ${plural(n, 'file')}` : `${verb} everything`;
+    el.btnGo.title = needProject ? 'Pick the portal project the files go in first' : '';
+    el.portalProjectRow.classList.toggle('missing', needProject);
   }
 
   // ------------------------------------------------------------ tabs
@@ -298,6 +304,8 @@
     }
     renderTimelines();
     renderNameExamples();
+    pickDefaultProject();
+    renderPortalControls();
     updateButtons();
     schedulePlan();
     if (isConnected()) {
@@ -1260,7 +1268,7 @@
       const where = job.mark ? `<small>${escapeHtml(job.mark.tcIn)}${job.kind === 'cut' ? ` → ${escapeHtml(job.mark.tcOut)}` : ''}</small>` : '';
       let stateText = st.status === 'complete' ? 'done' : st.status === 'rendering' ? `${st.percent}%` : st.status === 'ready' ? 'waiting' : st.status;
       if (up && up.state === 'uploading') stateText = `uploading ${up.percent}%`;
-      else if (up && up.state === 'uploaded') stateText = 'on the portal';
+      else if (up && up.state === 'uploaded') stateText = up.box ? `in ${up.box}` : 'on the portal';
       else if (up && up.state === 'failed') stateText = 'upload failed';
       else if (up && up.state === 'queued') stateText = 'to upload';
       const error = st.error || (up && up.error) || '';
@@ -1343,6 +1351,78 @@
     return state.portal.name || 'the portal';
   }
 
+  function uploadWanted() {
+    return portalConfigured() && el.optUpload.checked;
+  }
+
+  function selectedProject() {
+    return state.portal.projects.find((p) => p.id === state.portal.projectId) || null;
+  }
+
+  function projectOptionText(p) {
+    return [p.name, p.jobNumber, p.client].filter(Boolean).join(' · ');
+  }
+
+  function normName(s) {
+    return String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+  }
+
+  /**
+   * Which portal project this batch goes in, before the editor says: the one
+   * chosen last time for this Resolve project, else the one whose name matches
+   * it, else none (and the Export button waits).
+   */
+  function pickDefaultProject() {
+    const list = state.portal.projects;
+    if (state.portal.projectId && list.some((p) => p.id === state.portal.projectId)) return;
+    const resolveProject = (state.status && state.status.project) || '';
+    const remembered = resolveProject ? state.portal.byResolve[resolveProject] : null;
+    if (remembered && list.some((p) => p.id === remembered)) {
+      state.portal.projectId = remembered;
+      return;
+    }
+    const key = normName(resolveProject);
+    const match = key ? list.find((p) => normName(p.name) === key) || list.find((p) => normName(p.name).includes(key) || key.includes(normName(p.name))) : null;
+    state.portal.projectId = match ? match.id : '';
+  }
+
+  function rememberProject() {
+    const resolveProject = state.status && state.status.project;
+    if (!resolveProject || !state.portal.projectId) return;
+    state.portal.byResolve = { ...state.portal.byResolve, [resolveProject]: state.portal.projectId };
+    api.saveSettings({ portalProjectByResolve: state.portal.byResolve }).catch(() => {});
+  }
+
+  function renderProjectPicker() {
+    const sel = el.portalProject;
+    sel.innerHTML = '';
+    const list = state.portal.projects;
+    if (state.portal.loading && !list.length) sel.appendChild(option('', 'Loading projects…', true));
+    else if (!list.length) sel.appendChild(option('', state.portal.loadError ? `Could not load: ${state.portal.loadError}` : 'No projects loaded · refresh', true));
+    else sel.appendChild(option('', 'Choose a project…', !state.portal.projectId));
+    for (const p of list) sel.appendChild(option(p.id, projectOptionText(p), p.id === state.portal.projectId));
+    sel.disabled = state.portal.loading && !list.length;
+    el.btnPortalRefresh.disabled = state.portal.loading;
+    el.btnPortalRefresh.classList.toggle('busy', state.portal.loading);
+  }
+
+  async function loadPortalProjects() {
+    if (!portalConfigured() || !state.portal.tokenSet || state.portal.loading) return;
+    state.portal.loading = true;
+    state.portal.loadError = '';
+    renderProjectPicker();
+    try {
+      state.portal.projects = await api.portalProjects();
+      pickDefaultProject();
+    } catch (err) {
+      state.portal.loadError = err.message;
+    } finally {
+      state.portal.loading = false;
+      renderProjectPicker();
+      updateButtons();
+    }
+  }
+
   function resetUpload() {
     state.upload = { running: false, files: new Map(), result: null, error: null, total: 0, percentTotal: 0 };
   }
@@ -1357,6 +1437,8 @@
     const on = portalConfigured();
     el.uploadSwitch.classList.toggle('hidden', !on);
     el.uploadSwitch.querySelector('span').textContent = `Upload to ${portalName()} when done`;
+    el.portalProjectRow.classList.toggle('hidden', !uploadWanted());
+    renderProjectPicker();
     const up = state.upload;
     const finished = Boolean(state.lastSummary && state.lastSummary.done && state.lastSummary.complete > 0);
     const show = on && (up.running || up.result || up.error || finished);
@@ -1367,14 +1449,17 @@
     el.upload.classList.toggle('done', Boolean(up.result && !up.result.failed.length));
     el.upload.classList.toggle('bad', Boolean(up.error || (up.result && up.result.failed.length)));
     el.btnUpload.disabled = up.running || state.rendering;
-    el.btnUpload.textContent = up.running ? 'Uploading…' : up.result || up.error ? 'Upload again' : `Upload to ${portalName()}`;
+    const target = selectedProject();
+    el.btnUpload.textContent = up.running ? 'Uploading…' : up.result || up.error ? 'Upload again' : target ? `Upload to ${target.name}` : 'Upload';
     el.btnUploadOpen.classList.toggle('hidden', !(up.result && up.result.url));
+    const where = up.project ? up.project.name : target ? target.name : portalName();
     let text;
-    if (up.running) text = `Uploading to ${portalName()} · ${pct}% · ${uploadedCount()} of ${up.total} sent`;
+    if (up.running) text = `Uploading to ${where} · ${pct}% · ${uploadedCount()} of ${up.total} sent`;
     else if (up.error) text = `Upload failed: ${up.error}`;
-    else if (up.result && up.result.failed.length) text = `${up.result.uploaded.length} of ${up.total} uploaded, ${plural(up.result.failed.length, 'file')} failed`;
-    else if (up.result) text = `All ${plural(up.total, 'file')} on ${portalName()}. Categorise and share them there.`;
-    else text = `Finished files are ready to send to ${portalName()}.`;
+    else if (up.result && up.result.failed.length) text = `${up.result.uploaded.length} of ${up.total} in ${where}, ${plural(up.result.failed.length, 'file')} failed`;
+    else if (up.result) text = `All ${plural(up.total, 'file')} in ${where} on ${portalName()}. Check the boxes there, then send the final delivery.`;
+    else if (!target) text = 'Pick the portal project above, then upload the finished files.';
+    else text = `Finished files are ready to go into ${where} on ${portalName()}.`;
     el.uploadText.textContent = text;
   }
 
@@ -1384,13 +1469,15 @@
       resetUpload();
       state.upload.running = true;
       state.upload.total = ev.files.length;
+      state.upload.project = ev.project || null;
       state.upload.files = new Map(ev.files.map((f) => [f.jobId, { key: f.key, state: 'queued', percent: 0, error: null }]));
       showBanner(null);
     } else if (ev.phase === 'file') {
-      up.files.set(ev.jobId, { key: ev.key, state: ev.state, percent: ev.percent, error: ev.error || null });
+      up.files.set(ev.jobId, { key: ev.key, state: ev.state, percent: ev.percent, error: ev.error || null, box: ev.box || null });
       up.percentTotal = ev.percentTotal || 0;
     } else if (ev.phase === 'done') {
       up.running = false;
+      if (ev.project) up.project = ev.project;
       up.result = { batchId: ev.batchId, url: ev.url || null, uploaded: ev.uploaded || [], failed: ev.failed || [] };
     } else if (ev.phase === 'error') {
       up.running = false;
@@ -1401,9 +1488,16 @@
   }
 
   async function uploadNow() {
+    if (!state.portal.projectId) {
+      state.upload.error = 'Pick the portal project the files go in first.';
+      renderPortalControls();
+      el.portalProject.focus();
+      return;
+    }
     el.btnUpload.disabled = true;
     try {
-      await api.portalUpload({ category: el.portalCategory.value || undefined });
+      await api.portalUpload({ projectId: state.portal.projectId });
+      rememberProject();
     } catch (err) {
       state.upload.error = err.message;
       renderPortalControls();
@@ -1411,19 +1505,7 @@
   }
 
   function tokenPlaceholder() {
-    return state.portal.tokenSet ? 'Saved · paste a new one to replace it' : 'Paste the token from the portal';
-  }
-
-  function renderCategories(selected) {
-    el.portalCategory.innerHTML = '';
-    el.portalCategory.appendChild(option('', 'Choose on the portal', !selected));
-    let found = !selected;
-    for (const c of state.portal.categories) {
-      const hit = c.id === selected;
-      if (hit) found = true;
-      el.portalCategory.appendChild(option(c.id, c.name, hit));
-    }
-    if (!found && selected) el.portalCategory.appendChild(option(selected, selected, true));
+    return state.portal.tokenSet ? 'Saved · paste a new one to replace it' : 'Paste the key from Settings › ExportX on the portal';
   }
 
   function setPortalResult(text, kind) {
@@ -1441,7 +1523,8 @@
       const res = await api.portalTest({ portalUrl: url, token: typed || undefined });
       state.portal.url = url;
       state.portal.name = res.portal || '';
-      state.portal.categories = res.categories || [];
+      state.portal.projects = Array.isArray(res.projects) ? res.projects : state.portal.projects;
+      state.portal.loadError = '';
       if (typed) {
         await api.saveSettings({ portalUrl: url, portalToken: typed });
         state.portal.tokenSet = true;
@@ -1450,9 +1533,11 @@
         await api.saveSettings({ portalUrl: url });
       }
       el.portalToken.placeholder = tokenPlaceholder();
-      renderCategories(el.portalCategory.value);
-      setPortalResult(`Connected to ${res.portal || url}${state.portal.categories.length ? ` · ${state.portal.categories.length} categories` : ''}`, 'ok');
+      pickDefaultProject();
+      const keyLabel = res.key && res.key.label ? ` · key "${res.key.label}"` : '';
+      setPortalResult(`Connected to ${res.portal || url} · ${plural(state.portal.projects.length, 'project')}${keyLabel}`, 'ok');
       renderPortalControls();
+      updateButtons();
     } catch (err) {
       setPortalResult(err.message, 'bad');
     } finally {
@@ -1465,11 +1550,23 @@
     el.optUpload.addEventListener('change', () => {
       el.optPortalAuto.checked = el.optUpload.checked;
       api.saveSettings({ portalAuto: el.optUpload.checked }).catch(() => {});
+      renderPortalControls();
+      updateButtons();
+      if (el.optUpload.checked && !state.portal.projects.length) loadPortalProjects();
     });
     el.optPortalAuto.addEventListener('change', () => {
       el.optUpload.checked = el.optPortalAuto.checked;
       api.saveSettings({ portalAuto: el.optPortalAuto.checked }).catch(() => {});
+      renderPortalControls();
+      updateButtons();
     });
+    el.portalProject.addEventListener('change', () => {
+      state.portal.projectId = el.portalProject.value;
+      rememberProject();
+      renderPortalControls();
+      updateButtons();
+    });
+    el.btnPortalRefresh.addEventListener('click', () => loadPortalProjects());
     el.btnUpload.addEventListener('click', uploadNow);
     el.btnUploadOpen.addEventListener('click', () => {
       if (state.upload.result && state.upload.result.url) api.openUrl(state.upload.result.url).catch((e) => showBanner(e.message));
@@ -1497,7 +1594,6 @@
       }
     });
     el.btnPortalTest.addEventListener('click', testPortal);
-    el.portalCategory.addEventListener('change', () => api.saveSettings({ portalCategory: el.portalCategory.value }).catch(() => {}));
     api.onUpload(onUploadEvent);
   }
 
@@ -1592,12 +1688,20 @@
     el.optStart.checked = settings.startRender !== false;
     state.keys = { cut: String(settings.keyCut || 'c').toLowerCase(), still: String(settings.keyStill || 's').toLowerCase() };
     renderKeys();
-    state.portal = { url: String(settings.portalUrl || '').trim(), tokenSet: Boolean(settings.portalTokenSet), name: settings.portalName || '', categories: Array.isArray(settings.portalCategories) ? settings.portalCategories : [] };
+    state.portal = {
+      url: String(settings.portalUrl || '').trim(),
+      tokenSet: Boolean(settings.portalTokenSet),
+      name: settings.portalName || '',
+      projects: Array.isArray(settings.portalProjects) ? settings.portalProjects : [],
+      projectId: '',
+      byResolve: settings.portalProjectByResolve && typeof settings.portalProjectByResolve === 'object' ? settings.portalProjectByResolve : {},
+      loading: false,
+      loadError: '',
+    };
     el.portalUrl.value = state.portal.url;
     el.portalToken.placeholder = tokenPlaceholder();
     el.optPortalAuto.checked = Boolean(settings.portalAuto);
     el.optUpload.checked = Boolean(settings.portalAuto);
-    renderCategories(settings.portalCategory || '');
     renderPortalControls();
     const history = await api.logHistory().catch(() => []);
     el.log.textContent = history.join('\n');
@@ -1605,6 +1709,8 @@
     renderPreview();
     await loadProfiles(settings);
     await refreshStatus();
+    // A fresh project list for the picker, in the background; the saved one shows meanwhile.
+    if (uploadWanted()) loadPortalProjects();
   }
 
   init().catch((err) => showBanner(`ExportX failed to start: ${err.message}`));

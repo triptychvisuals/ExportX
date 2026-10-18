@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Build dist/exportx-portal-kit.zip: everything the portal team (or Claude Code in
-# the portal repo) needs to implement the ExportX ingest API. Standalone: the
+# Build dist/exportx-portal-kit.zip: the contract between ExportX and the portal's
+# plugin API, with the reference server and the smoke test. Standalone: the
 # plugin's client is copied in, so nothing references the rest of this repo.
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -9,13 +9,13 @@ OUT="$HERE/dist"
 STAGE="$OUT/exportx-portal-kit"
 rm -rf "$STAGE"
 mkdir -p "$STAGE/client"
-cp -R "$HERE/portal-kit/README.md" "$HERE/portal-kit/CLAUDE_CODE_PROMPT.md" "$HERE/portal-kit/openapi.yaml" \
+cp -R "$HERE/portal-kit/README.md" "$HERE/portal-kit/openapi.yaml" \
       "$HERE/portal-kit/schema" "$HERE/portal-kit/examples" "$HERE/portal-kit/reference-server" "$HERE/portal-kit/smoke" "$STAGE/"
 cp "$HERE/src/portal.js" "$STAGE/client/portal.js"
 cp "$HERE/LICENSE" "$STAGE/LICENSE"
 cat > "$STAGE/VERSION" <<TXT
 ExportX portal kit
-protocol: 1
+plugin API: 2
 exportx: $VERSION
 source: https://github.com/triptychvisuals/ExportX/tree/main/portal-kit
 TXT

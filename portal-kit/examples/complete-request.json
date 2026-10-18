@@ -1,6 +1,0 @@
-{
-  "uploaded": ["job-7f2a", "job-7f2b", "job-7f2c"],
-  "failed": [
-    { "key": "job-7f2d", "error": "Portal PUT /batches/20261018-5f3a9c1e/files/job-7f2d: Received 24883100 bytes, expected 24883200" }
-  ]
-}

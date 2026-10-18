@@ -1,0 +1,9 @@
+{
+  "request": {
+    "action": "batch", "projectId": "proj-muzq2ywy-ahaa", "batchId": "20261018-5f3a9c1e", "resolveProject": "GLS", "timeline": "Main Edit",
+    "uploaded": [ "Hero cut 16:9 · 261018_GLS_Final.mp4", "Social cutdowns · 261018_GLS_Social_01.mp4" ],
+    "failed": [ { "label": "261018_GLS_Still_01_0086500.tif", "error": "The file store answered 502" } ],
+    "bytes": 430400000
+  },
+  "response": { "ok": true, "url": "https://portal.triptychstudios.co/projects/proj-muzq2ywy-ahaa/delivery" }
+}

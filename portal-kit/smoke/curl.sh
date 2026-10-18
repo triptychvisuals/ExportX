@@ -1,36 +1,48 @@
 #!/usr/bin/env bash
-# The ExportX upload flow as four curl calls.
-#   bash curl.sh https://portal.example.com <token>
+# The ExportX upload flow as curl calls, against a portal (or the reference server).
+#   bash curl.sh https://portal.example.com <key> [projectId]
 set -euo pipefail
-BASE="${1:?portal url}"; TOKEN="${2:?token}"
-BASE="${BASE%/}"; case "$BASE" in */api/exportx) ;; *) BASE="$BASE/api/exportx";; esac
-HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BASE="${1:?portal url}"; TOKEN="${2:?plugin key}"; PROJECT="${3:-}"
+BASE="${BASE%/}"; BASE="$(printf '%s' "$BASE" | sed -E 's#/api(/.*)?$##')"
 AUTH="Authorization: Bearer $TOKEN"
+json() { python3 -c 'import json,sys; d=json.load(sys.stdin); print(eval(sys.argv[1]))' "$1"; }
 
 echo "1. ping"
-curl -fsS -H "$AUTH" "$BASE/ping"; echo
+curl -fsS -H "$AUTH" "$BASE/api/plugin/ping"; echo
 
-echo "2. create batch"
+echo "2. projects"
+PROJECTS=$(curl -fsS -H "$AUTH" "$BASE/api/plugin/projects")
+[ -n "$PROJECT" ] || PROJECT=$(printf '%s' "$PROJECTS" | json 'd["projects"][0]["id"]')
+echo "   using project $PROJECT"
+
+echo "3. the project's boxes"
+curl -fsS -H "$AUTH" "$BASE/api/plugin/deliverables?projectId=$PROJECT" | json '", ".join(b["name"] for b in d["boxes"]) or "(no boxes)"'
+
+echo "4. upload one file"
 TMP="$(mktemp -d)"
 printf 'ExportX smoke test, final\n' > "$TMP/261018_Smoke_Final.mp4"
 SIZE=$(wc -c < "$TMP/261018_Smoke_Final.mp4" | tr -d ' ')
-MANIFEST=$(cat <<JSON
-{"source":"exportx","exportxVersion":"smoke","project":"ExportX smoke","timeline":"Smoke Test","fps":24,
- "exportedAt":"$(date -u +%Y-%m-%dT%H:%M:%SZ)","namePattern":"{yymmdd}_{project}_{label}","category":null,
- "files":[{"key":"smoke-1","fileName":"261018_Smoke_Final.mp4","kind":"final","label":"Final","deliverableId":"final-4k-h265",
-  "deliverableName":"Final 4K","timeline":"Smoke Test","format":"mp4","codec":"H265","width":3840,"height":2160,
-  "tcIn":null,"tcOut":null,"durationFrames":null,"markIndex":null,"bytes":$SIZE,"modifiedAt":"$(date -u +%Y-%m-%dT%H:%M:%SZ)"}]}
-JSON
-)
-RESP=$(curl -fsS -H "$AUTH" -H 'Content-Type: application/json' -d "$MANIFEST" "$BASE/batches"); echo "$RESP"
-BATCH=$(printf '%s' "$RESP" | sed -n 's/.*"batchId":"\([^"]*\)".*/\1/p')
-[ -n "$BATCH" ] || { echo "no batchId in response"; exit 1; }
+PLAN=$(curl -fsS -H "$AUTH" -H 'Content-Type: application/json' -d "{\"action\":\"upload_url\",\"projectId\":\"$PROJECT\",\"filename\":\"261018_Smoke_Final.mp4\",\"size\":$SIZE,\"contentType\":\"video/mp4\"}" "$BASE/api/plugin/deliverables")
+MODE=$(printf '%s' "$PLAN" | json 'd["mode"]'); PATH_=$(printf '%s' "$PLAN" | json 'd["path"]')
+if [ "$MODE" = "tus" ]; then
+  PLAN=$(curl -fsS -H "$AUTH" -H 'Content-Type: application/json' -d "{\"action\":\"upload_url\",\"projectId\":\"$PROJECT\",\"filename\":\"261018_Smoke_Final.mp4\",\"size\":$SIZE,\"contentType\":\"video/mp4\",\"small\":true,\"path\":\"$PATH_\"}" "$BASE/api/plugin/deliverables")
+  MODE=$(printf '%s' "$PLAN" | json 'd["mode"]')
+fi
+if [ "$MODE" = "put" ]; then
+  URL=$(printf '%s' "$PLAN" | json 'd["url"]')
+  curl -fsS -X PUT -H 'Content-Type: video/mp4' --data-binary "@$TMP/261018_Smoke_Final.mp4" "$URL" > /dev/null
+else
+  # multipart: this small file is one part
+  URL=$(printf '%s' "$PLAN" | json 'd["parts"][0]["url"]'); UPLOAD=$(printf '%s' "$PLAN" | json 'd["uploadId"]')
+  ETAG=$(curl -fsS -D - -o /dev/null -X PUT --data-binary "@$TMP/261018_Smoke_Final.mp4" "$URL" | tr -d '\r' | awk 'tolower($1)=="etag:"{print $2}')
+  curl -fsS -H "$AUTH" -H 'Content-Type: application/json' -d "{\"action\":\"complete_upload\",\"projectId\":\"$PROJECT\",\"path\":\"$PATH_\",\"uploadId\":\"$UPLOAD\",\"parts\":[{\"partNumber\":1,\"etag\":\"${ETAG//\"/\\\"}\"}]}" "$BASE/api/plugin/deliverables" > /dev/null
+fi
+echo "   bytes at $PATH_ ($MODE)"
 
-echo "3. upload file"
-curl -fsS -X PUT -H "$AUTH" -H 'Content-Type: application/octet-stream' -H 'X-ExportX-Filename: 261018_Smoke_Final.mp4' \
-  --data-binary "@$TMP/261018_Smoke_Final.mp4" "$BASE/batches/$BATCH/files/smoke-1"; echo
+echo "5. register"
+curl -fsS -H "$AUTH" -H 'Content-Type: application/json' -d "{\"action\":\"register\",\"projectId\":\"$PROJECT\",\"file_path\":\"$PATH_\",\"fileName\":\"261018_Smoke_Final.mp4\",\"kind\":\"final\",\"size_bytes\":$SIZE,\"content_type\":\"video/mp4\",\"deliverableName\":\"Final 4K\",\"meta\":{\"kind\":\"final\",\"resolveProject\":\"Smoke\"}}" "$BASE/api/plugin/deliverables"; echo
 
-echo "4. complete"
-curl -fsS -H "$AUTH" -H 'Content-Type: application/json' -d '{"uploaded":["smoke-1"],"failed":[]}' "$BASE/batches/$BATCH/complete"; echo
+echo "6. batch note"
+curl -fsS -H "$AUTH" -H 'Content-Type: application/json' -d "{\"action\":\"batch\",\"projectId\":\"$PROJECT\",\"resolveProject\":\"Smoke\",\"timeline\":\"Smoke\",\"uploaded\":[\"Final 4K · 261018_Smoke_Final.mp4\"],\"failed\":[],\"bytes\":$SIZE}" "$BASE/api/plugin/deliverables"; echo
 rm -rf "$TMP"
 echo "OK"

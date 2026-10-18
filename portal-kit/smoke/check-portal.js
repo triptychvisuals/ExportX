@@ -2,34 +2,40 @@
 'use strict';
 
 /**
- * End-to-end smoke test for an ExportX portal implementation.
+ * End-to-end check of a portal's ExportX plugin API (v2).
  *
- *   node check-portal.js <portalUrl> <token> [--big <MB>] [--category <id>]
+ *   node check-portal.js <portalUrl> <key> [--project <id>] [--big <MB>]
  *
- * Generates three small files (a "final", a "cut" and a "still"), builds a
- * manifest exactly like the plugin does, and runs ping → create → PUT × 3 →
- * complete with the plugin's own client. Exits 1 on the first failure and
- * prints the portal's error text. Pass --big 2048 to add one 2 GB file and
- * check proxy limits and timeouts.
+ * Pings, lists the projects, picks one (the --project id, else the first),
+ * generates three small files (a "final", a "cut" and a "still"), and runs
+ * the plugin's own client through plan → bytes → register for each, then
+ * the batch note. Exits 1 on the first failure and prints the portal's
+ * message. Pass --big 2048 to add one 2 GB file and check the multipart
+ * path and any proxy limits.
+ *
+ * Against the real portal this lands files on that project's Delivery tab
+ * (remove them there afterwards); against the reference server they go to
+ * its inbox folder.
  */
 
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { PortalClient, buildManifest } = require('../client/portal');
+const { PortalClient, buildManifest, PROTOCOL_VERSION } = require('../client/portal');
 
 function arg(name, fallback) {
   const i = process.argv.indexOf(name);
   return i > -1 ? process.argv[i + 1] : fallback;
 }
 
-const [portalUrl, token] = process.argv.slice(2).filter((a, i, all) => !a.startsWith('--') && (i === 0 || !all[i - 1].startsWith('--')));
+const positional = process.argv.slice(2).filter((a, i, all) => !a.startsWith('--') && (i === 0 || !all[i - 1].startsWith('--')));
+const [portalUrl, token] = positional;
 if (!portalUrl || !token) {
-  console.error('Usage: node check-portal.js <portalUrl> <token> [--big <MB>] [--category <id>]');
+  console.error('Usage: node check-portal.js <portalUrl> <key> [--project <id>] [--big <MB>]');
   process.exit(2);
 }
+const wantProject = arg('--project', null);
 const bigMb = Number(arg('--big', 0));
-const category = arg('--category', null);
 
 function writeFile(dir, name, bytes) {
   const p = path.join(dir, name);
@@ -46,6 +52,23 @@ function writeFile(dir, name, bytes) {
 }
 
 (async () => {
+  const client = new PortalClient({ portalUrl, token, timeoutMs: 60000, userAgent: 'ExportX-smoke' });
+  console.log(`1. GET ${client.base}/api/plugin/ping`);
+  const ping = await client.ping();
+  console.log(`   ok: portal="${ping.portal}" version=${ping.version} storage=${ping.storage || '?'} key="${ping.key ? ping.key.label : '?'}"`);
+  if (String(ping.version) !== PROTOCOL_VERSION) console.log(`   note: this client expects v${PROTOCOL_VERSION}`);
+
+  console.log('2. GET /api/plugin/projects');
+  const projects = await client.projects();
+  if (!projects.length) throw new Error('the portal has no projects to upload into');
+  const project = wantProject ? projects.find((p) => p.id === wantProject) : projects[0];
+  if (!project) throw new Error(`no project with id ${wantProject}; the portal has: ${projects.map((p) => p.id).join(', ')}`);
+  console.log(`   ${projects.length} project(s); using "${project.name}" (${project.id}${project.jobNumber ? `, ${project.jobNumber}` : ''})`);
+
+  console.log(`3. GET /api/plugin/deliverables?projectId=${project.id}`);
+  const view = await client.projectFiles(project.id);
+  console.log(`   boxes: ${view.boxes.map((b) => `${b.name} (${b.files})`).join(', ') || '(none; files keep their deliverable name)'}; ${view.files.length} file(s) there already`);
+
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'exportx-smoke-'));
   const since = Date.now();
   const jobs = [
@@ -58,36 +81,32 @@ function writeFile(dir, name, bytes) {
   writeFile(dir, '261018_Smoke_Still_01_0086500.tif', 512 * 1024);
   if (bigMb > 0) {
     jobs.push({ jobId: 'smoke-big', kind: 'final', label: 'Master', profileId: 'final-prores-master', profileName: 'Master', timeline: 'Smoke Test', targetDir: dir, fileName: '261018_Smoke_Master', format: 'mov', codec: 'ProRes422HQ', settings: {}, mark: null });
-    console.log(`writing a ${bigMb} MB file…`);
+    console.log(`   writing a ${bigMb} MB file…`);
     writeFile(dir, '261018_Smoke_Master.mov', bigMb * 1024 * 1024);
   }
-
-  const client = new PortalClient({ portalUrl, token, timeoutMs: 60000, userAgent: 'ExportX-smoke' });
-  console.log(`1. GET ${client.base}/ping`);
-  const ping = await client.ping();
-  console.log(`   ok: portal="${ping.portal}" version=${ping.version} categories=${(ping.categories || []).map((c) => c.id || c).join(',') || '(none)'}`);
-
-  const bundle = buildManifest({ project: 'ExportX smoke', timeline: 'Smoke Test', fps: 24, jobs, namePattern: '{yymmdd}_{project}_{label}', exportxVersion: 'smoke', category }, { since });
+  const bundle = buildManifest({ project: 'ExportX smoke', timeline: 'Smoke Test', fps: 24, frames: 240, jobs, namePattern: '{yymmdd}_{project}_{label}', exportxVersion: 'smoke' }, { since });
   if (bundle.missing.length) throw new Error(`files not found: ${JSON.stringify(bundle.missing)}`);
-  console.log(`2. POST /batches with ${bundle.files.length} file(s)`);
-  let last = null;
+
+  console.log(`4. ${bundle.files.length} file(s): plan, bytes, register`);
+  let last = -1;
   const result = await client.uploadBatch(bundle, {
+    projectId: project.id,
     onFile: (ev) => {
       if (ev.state === 'uploading' && ev.percent !== last && ev.percent % 25 === 0) {
         process.stdout.write(`   ${ev.key}: ${ev.percent}%\n`);
         last = ev.percent;
       }
-      if (ev.state === 'uploaded') console.log(`3. PUT ${ev.key}: uploaded${ev.fileId ? ` (fileId ${ev.fileId})` : ''}`);
-      if (ev.state === 'failed') console.log(`3. PUT ${ev.key}: FAILED ${ev.error}`);
+      if (ev.state === 'uploaded') console.log(`   ${ev.key}: registered as "${ev.label}"${ev.box ? ` in box ${ev.box}` : ' (not in a box yet)'}`);
+      if (ev.state === 'failed') console.log(`   ${ev.key}: FAILED ${ev.error}`);
     },
   });
-  console.log(`4. POST /batches/${result.batchId}/complete → ${result.failed.length ? 'partial' : 'complete'}${result.url ? ` ${result.url}` : ''}`);
+  console.log(`5. batch note → ${result.url}`);
   fs.rmSync(dir, { recursive: true, force: true });
   if (result.failed.length) {
-    console.error(`FAILED: ${result.failed.length} file(s) rejected`);
+    console.error(`FAILED: ${result.failed.length} step(s) failed: ${result.failed.map((f) => `${f.label}: ${f.error}`).join('; ')}`);
     process.exit(1);
   }
-  console.log('OK: the portal speaks ExportX v1.');
+  console.log(`OK: the portal speaks the ExportX plugin API v${PROTOCOL_VERSION}. ${result.uploaded.length} file(s) landed in "${project.name}"; open ${result.url} and remove them when you are done.`);
 })().catch((err) => {
   console.error(`FAILED: ${err.message}${err.status ? ` (HTTP ${err.status})` : ''}`);
   process.exit(1);

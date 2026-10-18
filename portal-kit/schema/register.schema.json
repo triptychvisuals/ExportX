@@ -1,0 +1,47 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/triptychvisuals/ExportX/portal-kit/schema/register.schema.json",
+  "title": "ExportX register call",
+  "description": "The body of POST /api/plugin/deliverables with action register: one finished file, already uploaded to file_path, to file into the project's Delivery tab.",
+  "type": "object",
+  "required": ["action", "projectId", "file_path", "fileName", "kind", "size_bytes"],
+  "additionalProperties": false,
+  "properties": {
+    "action": { "const": "register" },
+    "projectId": { "type": "string", "minLength": 1, "maxLength": 120 },
+    "file_path": { "type": "string", "minLength": 1, "maxLength": 400, "description": "The path the upload plan gave back; must be inside deliverables/<projectId>/" },
+    "fileName": { "type": "string", "minLength": 1, "maxLength": 255 },
+    "kind": { "enum": ["final", "cut", "still"] },
+    "size_bytes": { "type": "integer", "minimum": 0 },
+    "content_type": { "type": "string", "maxLength": 120 },
+    "preview_path": { "type": "string", "minLength": 1, "maxLength": 400 },
+    "width": { "type": "integer", "minimum": 1, "maximum": 100000 },
+    "height": { "type": "integer", "minimum": 1, "maximum": 100000 },
+    "duration_seconds": { "type": "number", "minimum": 0, "maximum": 1000000 },
+    "box": { "type": "string", "maxLength": 120, "description": "The Delivery box to file it under, by name. Left out, the kind picks one." },
+    "deliverableName": { "type": "string", "maxLength": 120, "description": "The ExportX deliverable that produced it; the box of last resort." },
+    "meta": {
+      "type": "object",
+      "description": "What ExportX knew about the file. Every field optional; kept on the row as is.",
+      "additionalProperties": true,
+      "properties": {
+        "kind": { "enum": ["final", "cut", "still"] },
+        "deliverableId": { "type": ["string", "null"], "maxLength": 120 },
+        "deliverableName": { "type": ["string", "null"], "maxLength": 120 },
+        "label": { "type": ["string", "null"], "maxLength": 60 },
+        "fileName": { "type": ["string", "null"], "maxLength": 255 },
+        "timeline": { "type": ["string", "null"], "maxLength": 200 },
+        "resolveProject": { "type": ["string", "null"], "maxLength": 200 },
+        "format": { "type": ["string", "null"], "maxLength": 40 },
+        "codec": { "type": ["string", "null"], "maxLength": 60 },
+        "fps": { "type": ["number", "null"], "exclusiveMinimum": 0, "maximum": 1000 },
+        "tcIn": { "type": ["string", "null"], "pattern": "^\\d{2}:\\d{2}:\\d{2}[:;]\\d{2}$" },
+        "tcOut": { "type": ["string", "null"], "pattern": "^\\d{2}:\\d{2}:\\d{2}[:;]\\d{2}$" },
+        "durationFrames": { "type": ["integer", "null"], "minimum": 0 },
+        "markIndex": { "type": ["integer", "null"], "minimum": 0 },
+        "batchId": { "type": ["string", "null"], "maxLength": 80 },
+        "exportxVersion": { "type": ["string", "null"], "maxLength": 40 }
+      }
+    }
+  }
+}

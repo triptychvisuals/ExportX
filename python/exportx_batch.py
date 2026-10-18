@@ -38,7 +38,8 @@ Environment variables honoured in both modes:
    EXPORTX_RENDER        "1" to start rendering after queuing
    EXPORTX_HOME          overrides ~/.exportx
    EXPORTX_PORTAL_URL    Triptych Studios portal URL for --upload (see portal-kit/)
-   EXPORTX_PORTAL_TOKEN  bearer token for --upload
+   EXPORTX_PORTAL_TOKEN  the plugin key from the portal (Settings > ExportX) for --upload
+   EXPORTX_PORTAL_PROJECT  the portal project id the files go in (see --list-projects)
 """
 
 from __future__ import annotations
@@ -550,16 +551,29 @@ def queue_jobs(project, profiles, targets, out_dir: str, template: str, timeline
     return jobs, errors, notes
 
 
-# ----------------------------------------------------------------------------- portal upload (protocol v1, see portal-kit/)
+# ----------------------------------------------------------------------------- portal upload (plugin API v2, see portal-kit/)
+
+PORTAL_API = {"ping": "/api/plugin/ping", "projects": "/api/plugin/projects", "deliverables": "/api/plugin/deliverables"}
+CONTENT_TYPES = {"mp4": "video/mp4", "m4v": "video/x-m4v", "mov": "video/quicktime", "mxf": "application/mxf", "avi": "video/x-msvideo",
+                 "mkv": "video/x-matroska", "webm": "video/webm", "tif": "image/tiff", "tiff": "image/tiff", "jpg": "image/jpeg",
+                 "jpeg": "image/jpeg", "png": "image/png", "exr": "image/x-exr", "dpx": "image/x-dpx", "gif": "image/gif",
+                 "wav": "audio/wav", "aif": "audio/aiff", "aiff": "audio/aiff", "mp3": "audio/mpeg", "aac": "audio/aac"}
+
 
 def portal_base(url: str) -> str:
+    """The portal's address: a scheme added, trailing slashes and any pasted /api/... path removed."""
     u = (url or "").strip()
     if not u:
         raise SystemExit("No portal URL. Set EXPORTX_PORTAL_URL or pass --portal-url.")
     if not re.match(r"^https?://", u, re.I):
         u = "https://" + u
     u = u.rstrip("/")
-    return u if u.lower().endswith("/api/exportx") else u + "/api/exportx"
+    return re.sub(r"/api(/.*)?$", "", u, flags=re.I)
+
+
+def content_type_for(name: str) -> str:
+    m = re.search(r"\.([a-z0-9]{1,5})$", name.lower())
+    return CONTENT_TYPES.get(m.group(1), "application/octet-stream") if m else "application/octet-stream"
 
 
 def find_outputs(target_dir: str, base_name: str, since: float = 0.0) -> list[str]:
@@ -574,8 +588,9 @@ def find_outputs(target_dir: str, base_name: str, since: float = 0.0) -> list[st
     return out
 
 
-def build_manifest(project_name: str, timeline: str, fps: float, jobs: list[dict], template: str, category: str | None, since: float):
-    files, paths, missing = [], {}, []
+def build_manifest(project_name: str, timeline: str, fps: float | None, frames: int | None, jobs: list[dict], template: str, since: float):
+    """One entry per output file found on disk (with its local path), plus what was expected but not found."""
+    files, missing = [], []
     for job in jobs:
         outputs = find_outputs(job["targetDir"], job["fileName"], since)
         if not outputs:
@@ -587,39 +602,56 @@ def build_manifest(project_name: str, timeline: str, fps: float, jobs: list[dict
             mark = job.get("mark") or {}
             res = job.get("resolution") or {}
             files.append({
-                "key": key, "fileName": os.path.basename(full), "kind": job["kind"], "label": job.get("label"),
+                "key": key, "path": full, "fileName": os.path.basename(full), "kind": job["kind"], "label": job.get("label"),
                 "deliverableId": job["profile"], "deliverableName": job.get("profileName"), "timeline": job["timeline"],
                 "format": job.get("format"), "codec": job.get("codec"), "width": res.get("width"), "height": res.get("height"),
                 "tcIn": mark.get("tcIn"), "tcOut": mark.get("tcOut"), "durationFrames": mark.get("durationFrames"), "markIndex": mark.get("index"),
-                "bytes": st.st_size, "modifiedAt": _dt.datetime.fromtimestamp(st.st_mtime, _dt.timezone.utc).isoformat().replace("+00:00", "Z"),
+                "bytes": st.st_size,
             })
-            paths[key] = full
-    manifest = {
-        "source": "exportx", "exportxVersion": "python", "project": project_name, "timeline": timeline, "fps": fps,
-        "exportedAt": _dt.datetime.now(_dt.timezone.utc).isoformat().replace("+00:00", "Z"),
-        "namePattern": template, "category": category or None, "files": files,
-    }
-    return manifest, paths, missing
+    batch_id = _dt.datetime.now(_dt.timezone.utc).strftime("%Y%m%d") + "-" + os.urandom(4).hex()
+    manifest = {"source": "exportx", "exportxVersion": "python", "project": project_name, "timeline": timeline, "fps": fps, "frames": frames,
+                "namePattern": template, "batchId": batch_id}
+    return manifest, files, missing
 
 
-class _Progress:
-    """File wrapper so urllib streams the body and we can print progress."""
+def register_input(manifest: dict, f: dict) -> dict:
+    fps = manifest.get("fps")
+    duration = None
+    if f["kind"] == "cut" and f.get("durationFrames") and fps:
+        duration = round(f["durationFrames"] / fps, 2)
+    elif f["kind"] == "final" and manifest.get("frames") and fps:
+        duration = round(manifest["frames"] / fps, 2)
+    out = {"fileName": f["fileName"], "kind": f["kind"], "size_bytes": f["bytes"], "content_type": content_type_for(f["fileName"]),
+           "meta": {"kind": f["kind"], "deliverableId": f["deliverableId"], "deliverableName": f["deliverableName"], "label": f["label"],
+                    "fileName": f["fileName"], "timeline": f["timeline"] or manifest["timeline"], "resolveProject": manifest["project"],
+                    "format": f["format"], "codec": f["codec"], "fps": fps, "tcIn": f["tcIn"], "tcOut": f["tcOut"],
+                    "durationFrames": f["durationFrames"], "markIndex": f["markIndex"], "batchId": manifest["batchId"], "exportxVersion": "python"}}
+    if f.get("width") and f.get("height"):
+        out["width"], out["height"] = f["width"], f["height"]
+    if duration:
+        out["duration_seconds"] = duration
+    if f.get("deliverableName"):
+        out["deliverableName"] = f["deliverableName"]
+    return out
 
-    def __init__(self, path: str, label: str, log=print):
-        self.f = open(path, "rb")  # noqa: SIM115 - closed by urllib / close()
-        self.total = os.path.getsize(path)
-        self.sent = 0
-        self.last = -1
-        self.label = label
-        self.log = log
+
+class _Slice:
+    """A byte range of a file as a body urllib streams, counting what went out."""
+
+    def __init__(self, path: str, start: int, end: int, on_progress=None):
+        self.f = open(path, "rb")  # noqa: SIM115 - closed in close()
+        self.f.seek(start)
+        self.left = end - start
+        self.total = end - start
+        self.on_progress = on_progress
 
     def read(self, n=-1):
-        chunk = self.f.read(n)
-        self.sent += len(chunk)
-        pct = int(self.sent * 100 / self.total) if self.total else 100
-        if pct // 10 != self.last // 10:
-            self.last = pct
-            self.log(f"  {self.label}: {pct}%")
+        if self.left <= 0:
+            return b""
+        chunk = self.f.read(self.left if n is None or n < 0 else min(n, self.left))
+        self.left -= len(chunk)
+        if self.on_progress:
+            self.on_progress(self.total - self.left)
         return chunk
 
     def __len__(self):
@@ -629,15 +661,12 @@ class _Progress:
         self.f.close()
 
 
-def portal_request(base: str, token: str, method: str, path: str, body=None, headers=None, timeout=60):
+def portal_json(base: str, token: str, method: str, path: str, body=None, timeout=60):
     hdrs = {"Accept": "application/json", "User-Agent": "ExportX-python", "Authorization": f"Bearer {token}"}
-    hdrs.update(headers or {})
     data = None
-    if isinstance(body, (dict, list)):
+    if body is not None:
         data = json.dumps(body).encode("utf-8")
         hdrs["Content-Type"] = "application/json"
-    elif body is not None:
-        data = body
     req = urllib.request.Request(base + path, data=data, method=method, headers=hdrs)
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
@@ -646,43 +675,106 @@ def portal_request(base: str, token: str, method: str, path: str, body=None, hea
     except urllib.error.HTTPError as err:
         text = err.read().decode("utf-8", "replace")
         try:
-            msg = json.loads(text).get("error") or text
+            msg = json.loads(text).get("message") or json.loads(text).get("error") or text
         except ValueError:
             msg = text or str(err)
-        raise RuntimeError(f"Portal {method} {path}: {msg}") from None
+        raise RuntimeError(f"Portal: {msg}") from None
     except urllib.error.URLError as err:
         raise RuntimeError(f"Portal {method} {path}: {err.reason}") from None
 
 
-def upload_to_portal(url: str, token: str, manifest: dict, paths: dict, log=print) -> dict:
-    if not token:
-        raise SystemExit("No portal token. Set EXPORTX_PORTAL_TOKEN or pass --portal-token.")
-    if not manifest["files"]:
-        raise SystemExit("Nothing to upload: no finished files were found on disk.")
-    base = portal_base(url)
-    ping = portal_request(base, token, "GET", "/ping", timeout=15)
-    log(f"Portal: {ping.get('portal') or base} (API v{ping.get('version', '?')})")
-    created = portal_request(base, token, "POST", "/batches", manifest)
-    batch_id = created.get("batchId") or created.get("id")
-    if not batch_id:
-        raise RuntimeError("The portal did not return a batchId")
-    uploaded, failed = [], []
-    for entry in manifest["files"]:
-        key = entry["key"]
-        body = _Progress(paths[key], entry["fileName"], log)
+def put_slice(url: str, path: str, start: int, end: int, content_type: str | None, on_progress=None, retries: int = 4) -> str:
+    """PUT a byte range to a signed address; the ETag the store answered comes back."""
+    last: Exception | None = None
+    for attempt in range(retries):
+        body = _Slice(path, start, end, on_progress)
+        hdrs = {"Content-Length": str(end - start), "User-Agent": "ExportX-python"}
+        if content_type:
+            hdrs["Content-Type"] = content_type
+            hdrs["x-upsert"] = "true"
+        req = urllib.request.Request(url, data=body, method="PUT", headers=hdrs)
         try:
-            portal_request(base, token, "PUT", f"/batches/{urllib.request.quote(batch_id, safe='')}/files/{urllib.request.quote(key, safe='')}", body,
-                           {"Content-Type": "application/octet-stream", "Content-Length": str(body.total),
-                            "X-ExportX-Filename": urllib.request.quote(entry["fileName"], safe="")}, timeout=600)
-            uploaded.append(key)
-        except RuntimeError as err:
-            failed.append({"key": key, "error": str(err)})
-            log(f"  {entry['fileName']}: FAILED {err}")
+            with urllib.request.urlopen(req, timeout=600) as resp:
+                return resp.headers.get("ETag") or ""
+        except urllib.error.HTTPError as err:
+            last = RuntimeError(f"The file store answered {err.code}")
+            if 400 <= err.code < 500 and err.code not in (408, 429):
+                raise last from None
+        except urllib.error.URLError as err:
+            last = RuntimeError(f"Upload failed: {err.reason}")
         finally:
             body.close()
-    done = portal_request(base, token, "POST", f"/batches/{urllib.request.quote(batch_id, safe='')}/complete", {"uploaded": uploaded, "failed": failed})
-    log(f"Upload {'finished with errors' if failed else 'complete'}: {len(uploaded)} of {len(manifest['files'])} uploaded" + (f" -> {done.get('url')}" if done.get("url") else ""))
-    return {"batchId": batch_id, "uploaded": uploaded, "failed": failed, "url": done.get("url")}
+        time.sleep(0.8 * (2 ** attempt))
+    raise last or RuntimeError("Upload failed")
+
+
+def portal_projects(url: str, token: str) -> list[dict]:
+    base = portal_base(url)
+    return portal_json(base, token, "GET", PORTAL_API["projects"], timeout=15).get("projects") or []
+
+
+def upload_file(base: str, token: str, project_id: str, path: str, file_name: str, log=print) -> str:
+    size = os.path.getsize(path)
+    ctype = content_type_for(file_name)
+    last = [-1]
+
+    def progress(sent, total=size):
+        pct = int(sent * 100 / total) if total else 100
+        if pct // 10 != last[0] // 10:
+            last[0] = pct
+            log(f"  {file_name}: {pct}%")
+
+    plan = portal_json(base, token, "POST", PORTAL_API["deliverables"], {"action": "upload_url", "projectId": project_id, "filename": file_name, "size": size, "contentType": ctype})
+    if plan.get("mode") == "tus":
+        plan = portal_json(base, token, "POST", PORTAL_API["deliverables"], {"action": "upload_url", "projectId": project_id, "filename": file_name, "size": size, "contentType": ctype, "small": True, "path": plan.get("path")})
+    if plan.get("mode") == "put":
+        put_slice(plan["url"], path, 0, size, ctype, progress)
+        return plan["path"]
+    if plan.get("mode") != "multipart":
+        raise RuntimeError(f"The portal asked for an upload mode this script does not speak ({plan.get('mode')})")
+    part_size = int(plan["partSize"])
+    receipts = []
+    done_before = 0
+    for part in plan["parts"]:
+        start = (part["partNumber"] - 1) * part_size
+        end = min(start + part_size, size)
+        etag = put_slice(part["url"], path, start, end, None, lambda sent, d=done_before: progress(d + sent))
+        if not etag:
+            raise RuntimeError("A part uploaded but its receipt (ETag) did not come back")
+        receipts.append({"partNumber": part["partNumber"], "etag": etag})
+        done_before += end - start
+    portal_json(base, token, "POST", PORTAL_API["deliverables"], {"action": "complete_upload", "projectId": project_id, "path": plan["path"], "uploadId": plan["uploadId"], "parts": receipts})
+    return plan["path"]
+
+
+def upload_to_portal(url: str, token: str, project_id: str, manifest: dict, files: list[dict], log=print) -> dict:
+    if not token:
+        raise SystemExit("No plugin key. Set EXPORTX_PORTAL_TOKEN or pass --portal-token (Settings > ExportX on the portal makes one).")
+    if not project_id:
+        raise SystemExit("No portal project. Pass --portal-project <id> (see --list-projects) or set EXPORTX_PORTAL_PROJECT.")
+    if not files:
+        raise SystemExit("Nothing to upload: no finished files were found on disk.")
+    base = portal_base(url)
+    ping = portal_json(base, token, "GET", PORTAL_API["ping"], timeout=15)
+    log(f"Portal: {ping.get('portal') or base} (plugin API v{ping.get('version', '?')}, {ping.get('storage', '?')} storage)")
+    view = portal_json(base, token, "GET", PORTAL_API["deliverables"] + "?projectId=" + urllib.request.quote(project_id, safe=""), timeout=30)
+    log(f"Project: {view['project']['name']}; boxes: {', '.join(b['name'] for b in view.get('boxes') or []) or '(none)'}")
+    uploaded, failed, total = [], [], 0
+    for f in files:
+        try:
+            stored = upload_file(base, token, project_id, f["path"], f["fileName"], log)
+            reg = portal_json(base, token, "POST", PORTAL_API["deliverables"], {"action": "register", "projectId": project_id, "file_path": stored, **register_input(manifest, f)})
+            uploaded.append(reg.get("label") or f["fileName"])
+            total += f["bytes"]
+            box = (reg.get("box") or {}).get("name")
+            log(f"  on the portal: {reg.get('label')}" + (f" (box: {box})" if box else " (not in a box yet)"))
+        except RuntimeError as err:
+            failed.append({"label": f["fileName"], "error": str(err)})
+            log(f"  {f['fileName']}: FAILED {err}")
+    done = portal_json(base, token, "POST", PORTAL_API["deliverables"], {"action": "batch", "projectId": project_id, "batchId": manifest["batchId"],
+                       "resolveProject": manifest["project"], "timeline": manifest["timeline"], "uploaded": uploaded, "failed": failed, "bytes": total})
+    log(f"Upload {'finished with errors' if failed else 'complete'}: {len(uploaded)} of {len(files)} in {view['project']['name']}" + (f" -> {done.get('url')}" if done.get("url") else ""))
+    return {"batchId": manifest["batchId"], "uploaded": uploaded, "failed": failed, "url": done.get("url")}
 
 
 def wait_for_jobs(project, job_ids, interval=2.0, log=print):
@@ -723,10 +815,11 @@ def parse_args(argv):
     p.add_argument("--render", action="store_true", help="start rendering after queuing")
     p.add_argument("--wait", action="store_true", help="wait for rendering to finish (implies --render)")
     p.add_argument("--clear-queue", action="store_true", help="delete existing render jobs first")
-    p.add_argument("--upload", action="store_true", help="after --wait, upload the finished files to the portal (EXPORTX_PORTAL_URL/TOKEN)")
+    p.add_argument("--upload", action="store_true", help="after --wait, upload the finished files into a project on the portal (EXPORTX_PORTAL_URL/TOKEN/PROJECT)")
     p.add_argument("--portal-url", default=os.environ.get("EXPORTX_PORTAL_URL"), help="portal URL for --upload")
-    p.add_argument("--portal-token", default=os.environ.get("EXPORTX_PORTAL_TOKEN"), help="portal bearer token for --upload")
-    p.add_argument("--category", default=None, help="portal category id to suggest for the batch")
+    p.add_argument("--portal-token", default=os.environ.get("EXPORTX_PORTAL_TOKEN"), help="the plugin key from the portal (Settings > ExportX)")
+    p.add_argument("--portal-project", default=os.environ.get("EXPORTX_PORTAL_PROJECT"), help="the portal project id the files go in")
+    p.add_argument("--list-projects", action="store_true", help="list the portal's projects (id, job number, name) and exit")
     p.add_argument("--mark-cut", nargs=2, action="append", metavar=("IN", "OUT"), default=[], help="add a cut marker (timecodes)")
     p.add_argument("--mark-still", action="append", metavar="TC", default=[], help="add a still marker (timecode)")
     p.add_argument("--clear-marks", choices=["cut", "still", "all"], help="remove ExportX markers from the current timeline")
@@ -770,8 +863,9 @@ def selftest() -> int:
     assert s["FormatWidth"] == 1920 and s["TargetDir"] == "/out" and s["CustomName"] == "name"
     _, only_notes = expand_items([by_id["cuts-social-1080"]], TARGETS, "TL", "P", [], DEFAULT_TEMPLATE, "/out", fixed)
     assert only_notes and "No cuts marked" in only_notes[0]["message"]
-    assert portal_base("portal.example.com/") == "https://portal.example.com/api/exportx"
-    assert portal_base("http://localhost:8787/api/exportx") == "http://localhost:8787/api/exportx"
+    assert portal_base("portal.example.com/") == "https://portal.example.com"
+    assert portal_base("http://localhost:8787/api/plugin/ping") == "http://localhost:8787"
+    assert content_type_for("A.MOV") == "video/quicktime" and content_type_for("x.weird") == "application/octet-stream"
     import tempfile
     with tempfile.TemporaryDirectory() as tmp:
         for name in ("261017_P_Final.mp4", "261017_P_Still_01_0086500.tif", "261017_P_Still_010_0086500.tif", "other.mp4"):
@@ -782,10 +876,11 @@ def selftest() -> int:
                   "format": "mp4", "codec": "H265", "resolution": {"width": 3840, "height": 2160}, "mark": None, "targetDir": tmp, "fileName": "261017_P_Final"},
                  {"jobId": "j2", "timeline": "TL", "profile": "x", "profileName": "X", "label": "X", "kind": "cut", "format": "mp4", "codec": "H264",
                   "resolution": None, "mark": None, "targetDir": tmp, "fileName": "missing"}]
-        manifest, paths, missing = build_manifest("P", "TL", 24.0, pjobs, DEFAULT_TEMPLATE, "social", 0)
-        assert manifest["source"] == "exportx" and manifest["category"] == "social" and missing == ["missing"]
-        assert manifest["files"][0]["key"] == "j1" and manifest["files"][0]["bytes"] == 10 and manifest["files"][0]["width"] == 3840
-        assert paths["j1"].endswith("261017_P_Final.mp4") and "path" not in manifest["files"][0]
+        manifest, pfiles, missing = build_manifest("P", "TL", 24.0, 240, pjobs, DEFAULT_TEMPLATE, 0)
+        assert manifest["source"] == "exportx" and missing == ["missing"] and re.match(r"^\d{8}-[0-9a-f]{8}$", manifest["batchId"])
+        assert pfiles[0]["key"] == "j1" and pfiles[0]["bytes"] == 10 and pfiles[0]["width"] == 3840 and pfiles[0]["path"].endswith("261017_P_Final.mp4")
+        reg = register_input(manifest, pfiles[0])
+        assert reg["kind"] == "final" and reg["duration_seconds"] == 10.0 and reg["width"] == 3840 and reg["meta"]["resolveProject"] == "P" and "path" not in reg
     try:
         normalize_profile({"id": "x", "name": "X", "format": "mp4", "codec": "H264", "subfolder": "../up"})
     except ValueError:
@@ -801,6 +896,11 @@ def main(argv=None) -> int:
     args = parse_args(argv)
     if args.selftest:
         return selftest()
+
+    if args.list_projects:
+        for pr in portal_projects(args.portal_url, args.portal_token or ""):
+            print(f"  {pr.get('id'):<24} {pr.get('jobNumber') or '':<14} {pr.get('name')}" + (f"  ({pr.get('client')})" if pr.get("client") else ""))
+        return 0
 
     profiles = load_profiles(default_profile_dirs() + list(args.profiles_dir))
     if not profiles:
@@ -887,6 +987,8 @@ def main(argv=None) -> int:
         raise SystemExit("--upload needs --wait (the files have to exist before they can be uploaded).")
     if args.upload:
         portal_base(args.portal_url)  # fail early on a missing URL
+        if not args.portal_project:
+            raise SystemExit("--upload needs --portal-project <id> (run --list-projects to see them) or EXPORTX_PORTAL_PROJECT.")
     queued_at = time.time()
     should_render = args.render or args.wait or os.environ.get("EXPORTX_RENDER") == "1" or (not argv and CONFIG["render"])
     if should_render:
@@ -905,11 +1007,12 @@ def main(argv=None) -> int:
                 done_jobs = [j for j in jobs if statuses.get(j["jobId"], {}).get("status") == "complete"]
                 tl = project.GetCurrentTimeline()
                 fps = parse_fps(tl.GetSetting("timelineFrameRate")) if tl else None
-                manifest, paths, missing = build_manifest(project.GetName(), ", ".join(timelines) if timelines else (tl.GetName() if tl else ""),
-                                                          fps, done_jobs, args.name, args.category, queued_at)
+                frames = (int(tl.GetEndFrame()) - int(tl.GetStartFrame()) + 1) if tl else None
+                manifest, pfiles, missing = build_manifest(project.GetName(), ", ".join(timelines) if timelines else (tl.GetName() if tl else ""),
+                                                           fps, frames, done_jobs, args.name, queued_at)
                 for name in missing:
                     print(f"  no file found for {name}")
-                result = upload_to_portal(args.portal_url, args.portal_token, manifest, paths)
+                result = upload_to_portal(args.portal_url, args.portal_token, args.portal_project, manifest, pfiles)
                 if result["failed"]:
                     return 3
             if failed:

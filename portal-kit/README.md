@@ -1,180 +1,131 @@
 # ExportX portal kit
 
-Everything the **Triptych Studios portal** needs to receive finished exports from ExportX, the DaVinci Resolve plugin.
+How **ExportX**, the DaVinci Resolve plugin, lands a batch of finished deliverables inside a project on the **Triptych Studios portal**, and the tools to test that without the real portal.
 
-ExportX renders a batch (final exports, social cuts, stills) with Resolve's engine and, when the *Upload to the portal when done* switch is on, pushes every finished file to the portal together with a **manifest**: project, timeline, deliverable, timecodes, size. The portal stores the batch, lets you **categorise** it (commercial, music video, social, event, stills, or whatever you define) and share it from there.
-
-The whole protocol is **four HTTP calls** with a bearer token. No SDK, no multipart, no websockets.
+The portal side is **implemented** in the `triptych-portal` repository (plugin keys under Settings › ExportX, the routes under `app/api/plugin/`, the Delivery tab's boxes). Its own walk through is `docs/exportx-api.md` there; this folder mirrors the contract so the two repositories can be checked against each other, and ships a reference server that behaves like the portal.
 
 ```
-ExportX (Resolve plugin)                         Your portal
-───────────────────────                          ───────────
-GET  /api/exportx/ping                 ───────►  { ok, portal, version, categories }
-POST /api/exportx/batches  (manifest)  ───────►  { ok, batchId }
-PUT  /api/exportx/batches/{id}/files/{key}  ──►  { ok, fileId }         × once per file, raw bytes
-POST /api/exportx/batches/{id}/complete ──────►  { ok, batchId, url }
+ExportX (Resolve plugin)                                        The portal
+───────────────────────                                         ──────────
+GET  /api/plugin/ping                                  ───────► { ok, portal, version: "2", key, storage, url }
+GET  /api/plugin/projects                              ───────► { projects: [{ id, name, client, jobNumber, stage }] }
+GET  /api/plugin/deliverables?projectId=…              ───────► { project, boxes, files, readyAt, storage }
+per file:
+  POST /api/plugin/deliverables { action: "upload_url" }    ──► a plan: multipart (presigned parts) | put | tus
+  PUT  the bytes where the plan says (signed URLs, no key)   ──► the file store (Cloudflare R2 or Supabase)
+  POST /api/plugin/deliverables { action: "complete_upload" } (multipart only)
+  POST /api/plugin/deliverables { action: "register" }      ──► filed into a Delivery box: { ok, id, label, box }
+POST /api/plugin/deliverables { action: "batch" }      ───────► one note on the project: { ok, url }
 ```
 
 ## What is in this kit
 
 | Path | What it is |
 | --- | --- |
-| `README.md` | This document: protocol, data model, implementation notes. **Start here.** |
-| `CLAUDE_CODE_PROMPT.md` | A prompt to paste into Claude Code inside the portal repository. It tells Claude what to build and how to verify it with the files in this kit. |
-| `openapi.yaml` | OpenAPI 3.0 description of the API. Generate server stubs or clients from it, or load it into any API tool. |
-| `schema/manifest.schema.json` | JSON Schema (draft-07) for the batch manifest. Validate incoming manifests with it. |
-| `examples/` | Real request and response bodies: a manifest, the ping, errors, the complete call. |
-| `reference-server/server.js` | A dependency-free Node server that implements the API and writes batches to an inbox folder. It is the executable spec and the fixture ExportX's own tests run against. |
-| `client/portal.js` | The client ExportX ships (`src/portal.js` in the plugin). Read it to see exactly what the plugin sends; use it in your own tests. |
-| `smoke/check-portal.js` | Runs a complete upload against **any** URL + token using that client, with generated files. Your implementation is done when this passes. |
-| `smoke/curl.sh` | The same flow as four `curl` commands. |
+| `README.md` | This document: the flow, the calls, the filing rules, the notes. |
+| `openapi.yaml` | OpenAPI 3.0 description of the plugin API (v2). |
+| `schema/register.schema.json` | JSON Schema (draft-07) for the register call, the one with the most fields. |
+| `examples/` | Real request and response bodies for every call. |
+| `reference-server/server.js` | A dependency-free Node server that answers like the portal, plays the file store itself (single PUT, multipart parts, or a tus plan to exercise the fallback) and writes everything to an inbox folder. ExportX's tests run against it. |
+| `client/portal.js` | The client ExportX ships (`src/portal.js` in the plugin). What the plugin sends, exactly. |
+| `smoke/check-portal.js` | Runs the whole flow against **any** URL + key with generated files. Proves a portal (or a change to one) still speaks ExportX. |
+| `smoke/curl.sh` | The same flow as `curl` commands, for a terminal. |
 
 ## Quick start (five minutes)
 
 ```bash
-# 1. run the reference server
+# 1. a portal on your machine
 node reference-server/server.js --port 8787 --token devtoken --inbox ./exportx-inbox
+#    add --storage multipart to hand out presigned-part plans like R2 does
 
 # 2. in a second shell, push a fake batch at it
 node smoke/check-portal.js http://localhost:8787 devtoken
-ls exportx-inbox/           # one folder per batch: manifest.json, files/, status.json
+ls exportx-inbox/proj-spota/                 # files/, deliverables.json, batches/
 
-# 3. point the real plugin at it: ExportX › Settings › Triptych Studios portal
-#    URL   http://localhost:8787      Token  devtoken      → Test connection
+# 3. point the plugin at it: ExportX › Settings › Triptych Studios portal
+#    URL http://localhost:8787, key devtoken, Test connection; then pick a project next to Export
 ```
 
-Then build the same four endpoints into the portal, and run `smoke/check-portal.js https://portal.example.com <token>` until it passes.
+Against the real portal: make a key under **Settings › ExportX** there, then `node smoke/check-portal.js https://portal.triptychstudios.co tpx_… --project <id>` (it lands three small files on that project's Delivery tab; remove them there afterwards).
 
 ## The flow, in detail
 
-1. **Test connection** (Settings) calls `GET /ping`. The response names the portal and lists the **categories** the plugin should offer. ExportX caches both.
-2. The editor marks cuts and stills, presses **Export everything**. Resolve renders in the background.
-3. When every job has finished, ExportX looks at the output folder for each job's file (Resolve adds the extension and, for image sequences, a frame number), and builds the **manifest** (one entry per file found).
-4. `POST /batches` with the manifest. The portal validates it, creates the batch (status `uploading`) and returns a `batchId`.
-5. For each file, `PUT /batches/{batchId}/files/{key}` with the raw bytes as the body. `key` is the entry's `key` from the manifest. `Content-Length` is always set; `X-ExportX-Filename` carries the URL-encoded file name. Files are sent **one at a time**, in manifest order.
-6. `POST /batches/{batchId}/complete` with `{ uploaded: [keys], failed: [{ key, error }] }`. The portal marks the batch `complete` (or `partial` if anything failed) and may return a `url` the plugin shows as *open on the portal*.
-7. The editor opens the batch on the portal and categorises it. The plugin may have sent a `category` hint (the default chosen in Settings) but the portal is the source of truth.
+1. **Test connection** (Settings) calls `GET /ping` and `GET /projects`. The plugin remembers the portal's name, the key's label, and the project list.
+2. Next to **Export everything** the plugin shows the switch *Upload to Triptych Studios when done* and, under it, **Into project**: the portal's projects (name · job number · client). The plugin pre-selects the project picked last time for this Resolve project, else one whose name matches, and will not export until one is chosen. The choice is remembered per Resolve project.
+3. Resolve renders in the background. When every job has finished, the plugin looks at the output folder for each job's file (Resolve adds the extension and, for image sequences, a frame number).
+4. For each file: `upload_url` → bytes → (`complete_upload`) → `register`. Files go one at a time, in order; parts of one file go three at a time. Per-file failures do not stop the batch.
+5. `batch` writes one activity row on the project ("ExportX delivered 7 files (3.1 GB) from SpotA / Main Edit. Check the boxes, then send the final delivery.") and returns the Delivery tab's URL, which the plugin shows as *open on the portal*.
+6. On the portal, each file sits in the box its kind matched (or under **Not in a box yet**); every file has a **Move to** picker. Nothing reaches the client until **Send the final delivery**.
 
-If the plugin crashes or loses the network mid-way, the batch stays `uploading`. Treat batches that have not completed within a few hours as abandoned (show them, allow deletion). ExportX's *Upload again* button creates a **new** batch; it does not resume. Deduplicate on the portal side if you want (same `project` + `timeline` + file names + `bytes` within a short window).
+## The calls
 
-## API reference
+Base address: the portal's own (`https://portal.triptychstudios.co`). The plugin strips any `/api/…` path pasted into the URL field. Every plugin call carries `Authorization: Bearer tpx_…`; the PUTs to the file store carry no key (their URLs are signed). Every answer is JSON; errors are `{ "error": "code", "message": "what to do" }` with a 4xx/5xx status. The message is shown to the editor as is.
 
-Base path: `{portalUrl}/api/exportx`. ExportX appends `/api/exportx` to the URL the user types unless it already ends with it, so `https://portal.example.com` and `https://portal.example.com/api/exportx` both work.
-
-**Authentication.** Every request carries `Authorization: Bearer <token>`. Tokens are per user (or per workstation); issue them from the portal's account page and let the user paste one into ExportX. Respond `401` when the token is missing or wrong. ExportX stores the token encrypted on the workstation and never displays it again.
-
-**Content types.** JSON bodies are `application/json`; file bodies are `application/octet-stream`. All responses are JSON. Every response has a boolean `ok`; errors are `{ "ok": false, "error": "human-readable message" }` with a 4xx/5xx status. ExportX shows `error` to the user verbatim, so write it for an editor, not a developer ("This token has expired. Create a new one under Account › ExportX.").
-
-### `GET /ping`
-
-Health and discovery. Also what *Test connection* calls.
+### `GET /api/plugin/ping`
 
 ```json
-{ "ok": true, "portal": "Triptych Studios", "version": "1",
-  "categories": [ { "id": "commercial", "name": "Commercial" }, { "id": "music-video", "name": "Music video" } ] }
+{ "ok": true, "portal": "Triptych Studios", "version": "2", "key": { "label": "ExportX on the edit bay", "prefix": "tpx_a1b2c3" }, "storage": "r2", "url": "https://portal.triptychstudios.co" }
 ```
 
-- `portal` is shown in the plugin ("Upload to Triptych Studios when done").
-- `version` is the protocol version, currently `"1"`.
-- `categories` is optional. Each has a stable `id` (what comes back in the manifest) and a display `name`. Plain strings are accepted too. Return them in the order you want them listed.
+`storage` is `r2` (presigned parts, any size) or `supabase` (one PUT a file; 50 MB each on the free plan).
 
-### `POST /batches`
-
-Body: the manifest (see below and `schema/manifest.schema.json`). Create the batch and return its id.
+### `GET /api/plugin/projects`
 
 ```json
-{ "ok": true, "batchId": "20261018-5f3a9c1e" }
+{ "projects": [ { "id": "proj-muzq2ywy-ahaa", "name": "Ghetto Love Story", "client": "Kiraly Payne", "jobNumber": "TRP-2026-4821", "stage": "post", "createdAt": "2026-10-08T16:00:04.986Z" } ] }
 ```
 
-Return `400` with a clear `error` if the manifest is invalid (`validateManifest()` in the reference server shows the minimum checks: `source === "exportx"`, a `project`, a non-empty `files` array with unique `key`s, `fileName`, a valid `kind`, numeric `bytes`). `batchId` can be any URL-safe string.
+Every live project not in the trash, newest first. `id` is what every other call takes as `projectId`.
 
-### `PUT /batches/{batchId}/files/{key}`
-
-Body: the file's raw bytes. Headers: `Content-Length` (always present), `Content-Type: application/octet-stream`, `X-ExportX-Filename` (URL-encoded original file name, same as the manifest entry's `fileName`).
+### `GET /api/plugin/deliverables?projectId=…`
 
 ```json
-{ "ok": true, "fileId": "f_8c1b2e", "bytes": 2457600000 }
+{ "project": { "id": "proj-…", "name": "Ghetto Love Story", "jobNumber": "TRP-2026-4821", "stage": "post", "client": "Kiraly Payne" },
+  "boxes": [ { "id": "offer:0:hero cut 16:9", "name": "Hero cut 16:9", "spec": "ProRes 422 HQ, 4K", "files": 0 } ],
+  "files": [ { "id": "…", "label": "Hero cut 16:9 · hero.mov", "fileName": "hero.mov", "bytes": 2457600000, "kind": "video", "source": "portal", "createdAt": "…" } ],
+  "readyAt": null, "storage": "r2" }
 ```
 
-- `key` must be one of the manifest's keys; otherwise `400`.
-- Compare the bytes you received with `Content-Length` and reject mismatches with `400` (the reference server does). ExportX then marks that file *upload failed* and carries on with the next one.
-- A second PUT for the same key replaces the first (idempotent).
-- Optional `url` in the response is shown nowhere yet; reserved.
+The boxes are the deliverables the offer promised. The plugin may name one per file (`box` in the register call) but does not have to.
 
-### `POST /batches/{batchId}/complete`
+### `POST /api/plugin/deliverables` `{ "action": "upload_url", … }`
 
-Body: `{ "uploaded": ["job-1", "job-2"], "failed": [ { "key": "job-3", "error": "Portal PUT …: 400 …" } ] }`
+Request: `{ "action": "upload_url", "projectId", "filename", "size", "contentType", "kind"?: "file" | "preview", "small"?: true, "path"?: "…" }`
+
+One of three plans comes back:
+
+| `mode` | What to do |
+| --- | --- |
+| `multipart` | `{ path, uploadId, partSize, parts: [{ partNumber, url }] }`. PUT each `partSize` slice to its URL (the last part is the remainder), `Content-Length` set, no key, no `Content-Type`. Keep each response's `ETag`. Then `complete_upload` with `{ path, uploadId, parts: [{ partNumber, etag }] }`. |
+| `put` | `{ path, url }`. One PUT of the whole file with `Content-Type` set. |
+| `tus` | Supabase's resumable upload, which needs a browser session. Ask again with `"small": true` and the same `"path"`; a `put` plan comes back. |
+
+### `POST /api/plugin/deliverables` `{ "action": "register", … }`
+
+See `examples/register.json` and `schema/register.schema.json`.
 
 ```json
-{ "ok": true, "batchId": "20261018-5f3a9c1e", "status": "complete",
-  "url": "https://portal.example.com/batches/20261018-5f3a9c1e" }
+{ "ok": true, "id": "…", "label": "Hero cut 16:9 · 261018_GLS_Final.mp4", "box": { "id": "offer:0:hero cut 16:9", "name": "Hero cut 16:9" } }
 ```
 
-Set the batch status to `complete`, or `partial` when `failed` is non-empty. `url` is optional; when present the plugin shows an *open on the portal* link and puts it in the system notification. This is the moment to notify people, generate thumbnails, and so on.
+**Filing rules** (the portal's `lib/client-flow/exportx.ts`, mirrored in the reference server):
 
-### Optional, not used by the plugin
+- `kind` is `final`, `cut` or `still`. When `box` is not given (or names no box), the portal picks the box whose name (then spec) fits the kind: finals go to a box saying final, master, hero, main, 4K, ProRes and the like; cuts to social, cutdowns, vertical, 9:16, teaser, reel; stills to stills, photos, frames, thumbnails, poster. A box that names cuts or stills is never taken by a final.
+- The label is `"<Box> · <fileName>"`; the box a file is in is the part of its label before " · ". No box: the deliverable's own name stands in (`"Final 4K · 261018_GLS_Final.mp4"`), the file waits under **Not in a box yet**, and the studio moves it with one pick.
+- `meta` is kept on the row as is (the portal adds `kind`, `fileName`, `deliverableName`, `box`, and the key's label). For cuts, `tcIn`, `tcOut` and `durationFrames` make the tab show the range.
 
-The reference server also answers `GET /batches` and `GET /batches/{id}` for convenience. Build whatever read API your UI needs; ExportX only calls the four endpoints above.
+### `POST /api/plugin/deliverables` `{ "action": "batch", … }`
 
-## The manifest
+Request: `{ "action": "batch", "projectId", "batchId"?, "resolveProject"?, "timeline"?, "uploaded": [labels], "failed": [{ label, error }], "bytes"? }`. Answer: `{ "ok": true, "url": "https://portal…/projects/<id>/delivery" }`.
 
-`examples/manifest.json` is a complete one. Top level:
+## Errors
 
-| Field | Type | Meaning |
-| --- | --- | --- |
-| `source` | `"exportx"` | Always. Lets the endpoint reject other clients. |
-| `exportxVersion` | string | Plugin version, e.g. `"0.2.0"`. |
-| `project` | string | Resolve project name. |
-| `timeline` | string | Timeline name (comma-joined if the batch spans several). |
-| `fps` | number | Timeline frame rate, e.g. `23.976`. |
-| `exportedAt` | ISO 8601 | When the manifest was built (render finished). |
-| `namePattern` | string | The file-name pattern in force, e.g. `{yymmdd}_{project}_{label}`. |
-| `category` | string or null | The category id the user picked as default in ExportX, if any. A hint only. |
-| `files[]` | array | One entry per file, below. |
+`401 missing_plugin_key` / `bad_plugin_key`: make a new key under Settings › ExportX. `404 not_found`: the project id is wrong or the project is in the trash (refresh the list). `400 bad_path`: the `file_path` is not in that project's folder (use the `path` the plan gave back). `502 storage_unreachable`: the file store refused; the message says which R2 setting to check. `503 not_configured`: the deployment has no service role key.
 
-Each file entry:
+## Notes for anyone changing either side
 
-| Field | Type | Meaning |
-| --- | --- | --- |
-| `key` | string | Unique within the batch. Used in the PUT URL. Usually Resolve's job id; image sequences get `-1`, `-2`, … |
-| `fileName` | string | File name with extension, e.g. `261018_SpotA_Launch_Social_01.mp4`. |
-| `kind` | `final` / `cut` / `still` | Whole-timeline export, a marked cut, or a marked still frame. Drives the portal's default grouping. |
-| `label` | string | The deliverable's label used in the file name (`Final`, `Social`, `Still`). |
-| `deliverableId`, `deliverableName` | string | The ExportX deliverable (profile) that produced it, e.g. `cuts-social-1080` / `Social cuts`. |
-| `timeline` | string | Timeline this file came from. |
-| `format`, `codec` | string | Resolve's ids, e.g. `mp4` / `H265`, `tif` / `RGB16`. |
-| `width`, `height` | number or null | Output size when the deliverable sets one; `null` means the timeline's size. |
-| `tcIn`, `tcOut` | timecode or null | Mark range for cuts (`01:00:04:00` → `01:00:09:11`); the frame for stills (`tcIn === tcOut`); `null` for finals. |
-| `durationFrames` | number or null | Length of a cut in frames; `1` for stills. |
-| `markIndex` | number or null | 1-based number of the cut or still in the timeline. |
-| `bytes` | number | File size. Matches the PUT's `Content-Length`. |
-| `modifiedAt` | ISO 8601 | File modification time on the workstation. |
-
-Store the manifest as received (JSONB works well) and index what you query: `project`, `timeline`, `category`, `files[].kind`.
-
-## Implementation notes
-
-- **Files are big.** A ProRes master is tens of gigabytes. Stream the PUT body straight to object storage or disk; never buffer it in memory. Raise request-size and timeout limits on the reverse proxy for `/api/exportx/batches/*/files/*` (nginx `client_max_body_size 0;`, `proxy_request_buffering off;`). The plugin's socket timeout is 60 s of *inactivity*, not total time.
-- **One request per file, sequential.** You will not see parallel uploads from one workstation.
-- **Content-Length is always set**, so a 411 is never needed and you can pre-allocate or check quota before reading the body.
-- **Statuses:** `uploading` → `complete` | `partial`. Add `abandoned` for batches that never completed if you like.
-- **Categories** belong to the portal. ExportX only shows the list `ping` returns and sends the chosen `id` as a hint. Changing a batch's category later is a portal feature, not a plugin one.
-- **Security:** HTTPS only in production. Scope tokens to upload only (they live on edit workstations). Rate-limit `/ping`. Sanitise `fileName` before touching a file system (the reference server's `safeName`). Do not trust `bytes` from the manifest for quota; count what arrives.
-- **Keys are opaque.** Do not parse Resolve job ids; they are just unique strings.
-- **Versioning:** the protocol is `1`. Additive changes (new optional fields) keep the version. Anything breaking becomes `2` and the plugin will negotiate from `ping.version`.
-
-## Testing your implementation
-
-```bash
-node smoke/check-portal.js https://portal.example.com <token>              # full flow with generated files
-node smoke/check-portal.js https://portal.example.com <token> --big 2048   # one 2 GB file, for proxy limits
-bash smoke/curl.sh https://portal.example.com <token>                      # the same with curl
-```
-
-The script prints each step and exits non-zero on the first problem, with the server's `error` text. Then set the URL and token in ExportX › Settings and press *Test connection*; the plugin logs what it sees under Settings › Advanced › Log.
-
-## Where this lives in the plugin
-
-- `src/portal.js` (copied here as `client/portal.js`): `PortalClient` (ping, createBatch, uploadFile, completeBatch, uploadBatch), `findOutputs()` (which files a Resolve job produced), `buildManifest()`.
-- `main.js`: settings (`portalUrl`, encrypted `portalToken`, `portalAuto`, `portalCategory`), the `exportx:portal-test` / `exportx:portal-upload` handlers, automatic upload after a render, taskbar progress and notifications.
-- `ui/`: the switch next to Export, the upload card above the file list, and Settings › Triptych Studios portal.
+- The plugin's client (`client/portal.js`) retries a part or a PUT four times on 5xx, 408, 429 and network errors, and gives up at once on other 4xx. A missing `ETag` on a part is an error that names the bucket's CORS rule.
+- Progress is per file (`{ sent, total, percent }`) and overall; the plugin shows both, and the dock/taskbar icon mirrors the overall number.
+- Registering the same path twice makes two rows: register once per upload. *Upload again* in the plugin makes a new batch (new files) rather than resuming.
+- Protocol version is `2` (`ping.version`). Additive changes keep it; a breaking one becomes `3` and the plugin will say so in its log.
+- Changing the contract means changing, together: the portal's routes and `docs/exportx-api.md`, this README, `openapi.yaml`, the schema, the reference server, `client/portal.js` (really `src/portal.js`), `python/exportx_batch.py`, and `test/portal.test.js`.

@@ -1,0 +1,10 @@
+{
+  "request": { "action": "upload_url", "projectId": "proj-muzq2ywy-ahaa", "filename": "261018_GLS_Final.mp4", "size": 412000000, "contentType": "video/mp4" },
+  "response_multipart": {
+    "mode": "multipart", "path": "deliverables/proj-muzq2ywy-ahaa/m4x1k2-261018_GLS_Final.mp4", "uploadId": "2~abc…", "partSize": 16777216,
+    "parts": [ { "partNumber": 1, "url": "https://<account>.r2.cloudflarestorage.com/triptych-deliveries/deliverables/…?partNumber=1&uploadId=…&X-Amz-Signature=…" }, { "partNumber": 2, "url": "https://…?partNumber=2&…" } ]
+  },
+  "response_put": { "mode": "put", "path": "deliverables/proj-muzq2ywy-ahaa/m4x1k2-261018_GLS_Final.mp4", "url": "https://…signed…" },
+  "response_tus": { "mode": "tus", "bucket": "client-files", "path": "deliverables/proj-muzq2ywy-ahaa/m4x1k2-261018_GLS_Final.mp4" },
+  "then_complete": { "action": "complete_upload", "projectId": "proj-muzq2ywy-ahaa", "path": "deliverables/proj-muzq2ywy-ahaa/m4x1k2-261018_GLS_Final.mp4", "uploadId": "2~abc…", "parts": [ { "partNumber": 1, "etag": "\"9b2c…\"" }, { "partNumber": 2, "etag": "\"7f10…\"" } ] }
+}

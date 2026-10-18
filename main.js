@@ -31,7 +31,7 @@ const { BatchExporter, DEFAULT_TEMPLATE, TARGETS } = require('./src/batch');
 const { framesToTc } = require('./src/timecode');
 const { sanitize } = require('./src/naming');
 const profilesLib = require('./src/profiles');
-const { PortalClient, buildManifest, normalizeBaseUrl } = require('./src/portal');
+const { PortalClient, buildManifest, normalizeBaseUrl, PROTOCOL_VERSION } = require('./src/portal');
 const PKG = require('./package.json');
 
 const PLUGIN_ID = 'com.triptychvisuals.exportx';
@@ -47,13 +47,14 @@ const DEFAULT_SETTINGS = {
   startRender: true,
   keyCut: 'c',
   keyStill: 's',
-  // Triptych Studios portal (optional). The token is stored encrypted when the OS keychain is available.
+  // Triptych Studios portal (optional). The key is stored encrypted when the OS keychain is available.
   portalUrl: '',
   portalToken: '',
   portalAuto: false,
-  portalCategory: '',
   portalName: '',
-  portalCategories: [],
+  portalKeyLabel: '',
+  portalProjects: [], // the last list fetched, so the picker fills before the portal answers
+  portalProjectByResolve: {}, // Resolve project name -> portal project id, the last choice made for it
 };
 const TOKEN_PREFIX = 'enc:';
 const PREVIEW_DIR = path.join(USER_DIR, 'previews');
@@ -85,7 +86,7 @@ const state = {
   monitor: null,
   logBuffer: [],
   press: null,
-  batch: null, // the last queued batch: { queuedAt, project, timeline, fps, namePattern, upload, statuses }
+  batch: null, // the last queued batch: { queuedAt, project, timeline, fps, frames, namePattern, upload, portalProjectId, statuses }
   upload: { running: false },
   preview: { rendering: false, jobId: null, key: null, percent: 0 },
   playhead: { timer: null, inFlight: false, info: null, infoAt: 0, last: null, marksAt: 0, marksKey: null },
@@ -158,7 +159,7 @@ function publicSettings(settings) {
 
 function portalConfig() {
   const s = readSettings();
-  return { url: String(s.portalUrl || '').trim(), token: openToken(s.portalToken), auto: Boolean(s.portalAuto), category: s.portalCategory || null };
+  return { url: String(s.portalUrl || '').trim(), token: openToken(s.portalToken), auto: Boolean(s.portalAuto), name: s.portalName || '' };
 }
 
 function loadProfiles() {
@@ -396,7 +397,7 @@ async function startRender(jobIds) {
       else taskbarProgress(-1);
       send('exportx:done', result);
       const batch = state.batch;
-      const willUpload = Boolean(batch && batch.upload && !stopped && summary.complete > 0);
+      const willUpload = Boolean(batch && batch.upload && batch.portalProjectId && !stopped && summary.complete > 0);
       notify(
         summary.failed ? 'ExportX: render finished with errors' : 'ExportX: render finished',
         `${summary.complete} of ${summary.total} files done${batch && batch.project ? ` · ${batch.project}` : ''}${willUpload ? ' · uploading to the portal' : ''}`,
@@ -425,22 +426,27 @@ function portalClient(cfg, timeoutMs) {
 }
 
 /**
- * Push the finished files of the last batch to the portal. Resolves as soon as
- * the upload has started (progress goes out as exportx:upload events).
+ * Push the finished files of the last batch into a project on the portal.
+ * Resolves as soon as the upload has started (progress goes out as
+ * exportx:upload events).
  */
-async function uploadBatch({ category, trigger = 'manual' } = {}) {
+async function uploadBatch({ projectId, trigger = 'manual' } = {}) {
   const cfg = portalConfig();
   if (!cfg.url) throw new Error('No portal URL is set. Add it under Settings › Portal.');
-  if (!cfg.token) throw new Error('No portal token is saved. Paste it under Settings › Portal.');
+  if (!cfg.token) throw new Error('No portal key is saved. Make one under Settings › ExportX on the portal and paste it under Settings › Portal here.');
   if (state.upload.running) throw new Error('An upload is already running');
   const batch = state.batch;
   if (!batch || !state.jobs.length) throw new Error('Nothing to upload yet: export a batch first.');
+  const portalProjectId = String(projectId || batch.portalProjectId || '').trim();
+  if (!portalProjectId) throw new Error('Pick the portal project the files go in first.');
+  const projects = readSettings().portalProjects || [];
+  const portalProject = projects.find((p) => p.id === portalProjectId) || { id: portalProjectId, name: portalProjectId };
   const statuses = batch.statuses && batch.statuses.length ? batch.statuses : await requireExporter().status(state.jobs.map((j) => j.jobId));
   const complete = new Set(statuses.filter((s) => s.status === 'complete').map((s) => s.jobId));
   const jobs = state.jobs.filter((j) => complete.has(j.jobId));
   if (!jobs.length) throw new Error('No finished files to upload yet.');
   const bundle = buildManifest(
-    { project: batch.project, timeline: batch.timeline, fps: batch.fps, jobs, namePattern: batch.namePattern, exportxVersion: PKG.version, category: category || cfg.category },
+    { project: batch.project, timeline: batch.timeline, fps: batch.fps, frames: batch.frames, jobs, namePattern: batch.namePattern, exportxVersion: PKG.version },
     { since: batch.queuedAt },
   );
   for (const m of bundle.missing) log(`Upload: no file named ${m.fileName}.* in ${m.targetDir}`);
@@ -451,11 +457,13 @@ async function uploadBatch({ category, trigger = 'manual' } = {}) {
   const sent = new Map();
   state.upload.running = true;
   taskbarProgress(0);
-  log(`Uploading ${files.length} file(s) (${(totalBytes / 1048576).toFixed(1)} MB) to ${normalizeBaseUrl(cfg.url)}`);
-  send('exportx:upload', { phase: 'start', trigger, portal: cfg.url, files, totalBytes, missing: bundle.missing });
+  log(`Uploading ${files.length} file(s) (${(totalBytes / 1048576).toFixed(1)} MB) to ${normalizeBaseUrl(cfg.url)} › ${portalProject.name}`);
+  send('exportx:upload', { phase: 'start', trigger, portal: cfg.url, project: portalProject, files, totalBytes, missing: bundle.missing });
+  if (batch.project) writeSettings({ portalProjectByResolve: { ...(readSettings().portalProjectByResolve || {}), [batch.project]: portalProjectId } });
 
   portalClient(cfg, 60000)
     .uploadBatch(bundle, {
+      projectId: portalProjectId,
       onFile: (ev) => {
         const f = bundle.files.find((x) => x.key === ev.key);
         const bytes = f ? f.bytes : 0;
@@ -464,7 +472,8 @@ async function uploadBatch({ category, trigger = 'manual' } = {}) {
         const percentTotal = totalBytes ? Math.round((done / totalBytes) * 100) : 0;
         taskbarProgress(percentTotal / 100);
         if (ev.state === 'failed') log(`Upload failed for ${f ? f.fileName : ev.key}: ${ev.error}`);
-        send('exportx:upload', { phase: 'file', key: ev.key, jobId: f ? f.jobId : null, state: ev.state, percent: ev.percent, error: ev.error || null, percentTotal });
+        if (ev.state === 'uploaded') log(`On the portal: ${ev.label || (f ? f.fileName : ev.key)}${ev.box ? ` (box: ${ev.box})` : ' (not in a box yet)'}`);
+        send('exportx:upload', { phase: 'file', key: ev.key, jobId: f ? f.jobId : null, state: ev.state, percent: ev.percent, error: ev.error || null, label: ev.label || null, box: ev.box || null, percentTotal });
       },
     })
     .then((result) => {
@@ -472,9 +481,9 @@ async function uploadBatch({ category, trigger = 'manual' } = {}) {
       const summary = `${result.uploaded.length} of ${files.length} uploaded`;
       if (result.failed.length) flashError();
       else taskbarProgress(-1);
-      log(`Upload ${result.failed.length ? 'finished with errors' : 'complete'}: ${summary}${result.url ? ` → ${result.url}` : ''}`);
-      send('exportx:upload', { phase: 'done', batchId: result.batchId, url: result.url, uploaded: result.uploaded, failed: result.failed, missing: bundle.missing });
-      notify(result.failed.length ? 'ExportX: upload finished with errors' : 'ExportX: uploaded to the portal', `${summary}${batch.project ? ` · ${batch.project}` : ''}`);
+      log(`Upload ${result.failed.length ? 'finished with errors' : 'complete'}: ${summary} → ${portalProject.name}${result.url ? ` (${result.url})` : ''}`);
+      send('exportx:upload', { phase: 'done', batchId: result.batchId, project: portalProject, url: result.url, uploaded: result.uploaded, failed: result.failed, missing: bundle.missing });
+      notify(result.failed.length ? 'ExportX: upload finished with errors' : `ExportX: delivered to ${portalProject.name}`, `${summary}. Check the boxes on the Delivery tab, then send the final delivery.`);
     })
     .catch((err) => {
       state.upload.running = false;
@@ -486,11 +495,11 @@ async function uploadBatch({ category, trigger = 'manual' } = {}) {
   return { files, totalBytes, missing: bundle.missing };
 }
 
-function normalizeCategories(list) {
-  if (!Array.isArray(list)) return [];
-  return list
-    .map((c) => (typeof c === 'string' ? { id: c, name: c } : c && c.id ? { id: String(c.id), name: String(c.name || c.id) } : null))
-    .filter(Boolean);
+/** The portal's projects, fetched fresh and remembered for the picker. */
+async function fetchPortalProjects(cfg) {
+  const projects = await portalClient(cfg, 15000).projects();
+  writeSettings({ portalProjects: projects });
+  return projects;
 }
 
 handle('exportx:portal-test', async (opts) => {
@@ -498,14 +507,23 @@ handle('exportx:portal-test', async (opts) => {
   const url = String((opts && opts.portalUrl) || saved.url || '').trim();
   const token = (opts && opts.token) || saved.token;
   if (!url) throw new Error('Enter the portal URL first.');
-  const res = await portalClient({ url, token }, 10000).ping();
-  const categories = normalizeCategories(res.categories);
-  writeSettings({ portalName: res.portal || '', portalCategories: categories });
-  log(`Portal OK: ${res.portal || url} (API v${res.version || '?'}), ${categories.length} categories`);
-  return { ok: true, portal: res.portal || null, version: res.version || null, categories, url: normalizeBaseUrl(url) };
+  if (!token) throw new Error('Paste the key from the portal (Settings › ExportX › Make a key) first.');
+  const client = portalClient({ url, token }, 10000);
+  const res = await client.ping();
+  if (res.version && String(res.version) !== PROTOCOL_VERSION) log(`Portal speaks plugin API v${res.version}; this ExportX expects v${PROTOCOL_VERSION}`);
+  const projects = await client.projects();
+  writeSettings({ portalName: res.portal || '', portalKeyLabel: res.key && res.key.label ? res.key.label : '', portalProjects: projects });
+  log(`Portal OK: ${res.portal || url} (API v${res.version || '?'}, ${res.storage || 'unknown'} storage), key "${res.key && res.key.label ? res.key.label : '?'}", ${projects.length} projects`);
+  return { ok: true, portal: res.portal || null, version: res.version || null, storage: res.storage || null, key: res.key || null, projects, url: normalizeBaseUrl(url) };
 });
 
-handle('exportx:portal-upload', async (opts) => uploadBatch({ category: opts && opts.category, trigger: 'manual' }));
+handle('exportx:portal-projects', async () => {
+  const cfg = portalConfig();
+  if (!cfg.url || !cfg.token) throw new Error('Set the portal URL and key under Settings › Portal first.');
+  return fetchPortalProjects(cfg);
+});
+
+handle('exportx:portal-upload', async (opts) => uploadBatch({ projectId: opts && opts.projectId, trigger: 'manual' }));
 
 handle('exportx:open-url', async (url) => {
   const u = String(url || '');
@@ -845,7 +863,19 @@ handle('exportx:queue', async (req) => {
   state.jobs = jobs;
   const portal = portalConfig();
   const upload = req && typeof req.upload === 'boolean' ? req.upload : portal.auto;
-  state.batch = { queuedAt, project, timeline: request.timelines ? request.timelines.join(', ') : info.name, fps: info.fps, namePattern: request.nameTemplate, upload: upload && Boolean(portal.url), statuses: [] };
+  const portalProjectId = req && req.portalProjectId ? String(req.portalProjectId) : '';
+  if (upload && portal.url && !portalProjectId) throw new Error('Pick the portal project the files go in, or turn the upload switch off.');
+  state.batch = {
+    queuedAt,
+    project,
+    timeline: request.timelines ? request.timelines.join(', ') : info.name,
+    fps: info.fps,
+    frames: info.endFrame - info.startFrame + 1,
+    namePattern: request.nameTemplate,
+    upload: upload && Boolean(portal.url),
+    portalProjectId,
+    statuses: [],
+  };
   writeSettings({
     targetDir: request.targetDir,
     nameTemplate: request.nameTemplate,
@@ -853,6 +883,7 @@ handle('exportx:queue', async (req) => {
     clearExisting: request.clearExisting,
     startRender: Boolean(req && req.startRender),
     ...(req && typeof req.upload === 'boolean' ? { portalAuto: req.upload } : {}),
+    ...(portalProjectId && project ? { portalProjectByResolve: { ...(readSettings().portalProjectByResolve || {}), [project]: portalProjectId } } : {}),
   });
   let rendering = false;
   if (req && req.startRender && jobs.length) {

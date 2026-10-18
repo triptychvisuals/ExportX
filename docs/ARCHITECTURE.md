@@ -49,8 +49,8 @@ Resolve timeline markers = where cuts and stills live (customData exportx:cut / 
 | `src/timecode.js` | fps parsing, timecode ↔ absolute frames including 29.97/59.94 drop-frame. |
 | `src/profiles.js` | Loads and validates profile JSON from the bundled and user folders; `loadProfilesWithOrigin` (isUser/hasBundled), `saveUserProfile`, `deleteUserProfile` for the Settings tab. |
 | `src/naming.js` | File-name convention (`{yymmdd}_{project}_{label}` by default), tokens, sanitising, `defaultLabel`. |
-| `src/portal.js` | `PortalClient` (ping, createBatch, uploadFile with streamed bodies and progress, completeBatch, `uploadBatch`), `findOutputs()` (which files on disk a Resolve job produced, with or without frame numbers, newer than the queue time) and `buildManifest()` (jobs → portal manifest, no local paths). Plain `http`/`https`, no dependencies. |
-| `portal-kit/` | The contract for the portal side: README (protocol v1), `openapi.yaml`, `schema/manifest.schema.json`, examples, a dependency-free reference server (also the test fixture), a smoke script that proves an implementation, and the Claude Code prompt for the portal repository. |
+| `src/portal.js` | `PortalClient` for the portal's plugin API (v2): `ping`, `projects`, `projectFiles`, `uploadFile` (asks for a plan, then streams the bytes as presigned multipart parts three at a time with retries, or one signed PUT; a `tus` plan is asked again as a PUT), `register`, `batch`, and `uploadBatch` tying them together per file. Also `findOutputs()` (which files on disk a Resolve job produced, with or without frame numbers, newer than the queue time), `buildManifest()` (jobs → files with local paths, the batch id) and `registerInput()` (what the portal is told about a file: kind, size, type, size in pixels, duration, timecodes, deliverable). Plain `http`/`https`, no dependencies. |
+| `portal-kit/` | The contract with the portal, mirrored from the `triptych-portal` repository: README, `openapi.yaml`, `schema/register.schema.json`, examples, a dependency-free reference server that behaves like the portal (put, multipart or tus plans; also the test fixture), and a smoke script that proves either side. |
 | `test/helpers/mock-resolve.js` | In-memory Resolve with the same method names (including timeline markers and a playhead), used by the tests and by `EXPORTX_MOCK=1`. |
 
 ## Frame bookkeeping
@@ -95,11 +95,12 @@ Resolve's scripting API cannot stream its viewer, so the panel asks Resolve to r
 
 ## Flow of an upload
 
-1. Main remembers, per batch, the queue time, project, timeline, fps and name pattern. After the render, it keeps only the jobs Resolve reports `complete`.
-2. `buildManifest()` looks in each job's folder for `fileName.ext` or `fileName[_.-]NNNN.ext` newer than the queue time (Resolve adds the extension; image sequences get frame numbers) and produces one manifest entry per file, plus a `missing` list that is logged.
-3. `PortalClient.uploadBatch()`: `GET /ping` is not repeated here (Test connection did that); `POST /batches` with the manifest, then one streamed `PUT /batches/{id}/files/{key}` per file (Content-Length set, `X-ExportX-Filename`), then `POST /batches/{id}/complete` with the uploaded and failed keys. Per-file failures do not stop the batch.
-4. Every step goes to the renderer as `exportx:upload` events (`start`, `file` with percent and overall percent, `done` with the portal's URL, `error`), to the taskbar as progress, and to the log. A notification announces the result.
-5. *Upload to portal* in the panel runs the same path by hand for the last batch; it creates a new batch on the portal (no resume).
+1. The picker next to Export lists the portal's projects (`GET /api/plugin/projects`, cached in settings); the renderer pre-selects the project chosen last time for this Resolve project, else a name match, and the queue request carries `portalProjectId`. Main refuses to queue a batch with the switch on and no project.
+2. Main remembers, per batch, the queue time, project, timeline, fps, length, name pattern and the portal project. After the render, it keeps only the jobs Resolve reports `complete`.
+3. `buildManifest()` looks in each job's folder for `fileName.ext` or `fileName[_.-]NNNN.ext` newer than the queue time (Resolve adds the extension; image sequences get frame numbers) and produces one entry per file, plus a `missing` list that is logged.
+4. `PortalClient.uploadBatch()`: for each file, `upload_url` (a plan), the bytes to the plan's signed addresses (parts three at a time for R2, one PUT otherwise), `complete_upload` when it was multipart, then `register` with `registerInput()`; the portal files it into a Delivery box and answers with the label and the box. Then `batch`, one note on the project, which returns the Delivery tab's URL. Per-file failures do not stop the batch.
+5. Every step goes to the renderer as `exportx:upload` events (`start` with the project, `file` with percent, overall percent and the box, `done` with the URL, `error`), to the taskbar as progress, and to the log. A notification announces the result.
+6. *Upload* in the panel runs the same path by hand for the last batch into the picked project; it registers the files again (no resume).
 
 ## Roadmap ideas
 

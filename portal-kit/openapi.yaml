@@ -1,233 +1,312 @@
 openapi: 3.0.3
 info:
-  title: ExportX ingest API
-  version: "1"
+  title: Triptych Studios portal, plugin API for ExportX
+  version: "2"
   description: |
-    The endpoints a portal implements to receive finished exports from ExportX,
-    the DaVinci Resolve batch-export plugin. Four calls, bearer-token auth,
-    raw-byte uploads. See README.md in this kit for the flow and the notes.
+    The calls ExportX (the DaVinci Resolve batch export plugin) makes to land a
+    batch of finished deliverables inside a project on the portal. Bearer-key
+    auth; files go straight to the file store on signed URLs the plans hand out.
+    README.md in this kit has the flow and the filing rules.
 servers:
-  - url: https://portal.example.com/api/exportx
+  - url: https://portal.triptychstudios.co
 security:
-  - bearer: []
+  - pluginKey: []
 paths:
-  /ping:
+  /api/plugin/ping:
     get:
-      summary: Health check and discovery (what "Test connection" calls)
+      summary: Is the key good, and who is answering (what Test connection calls)
       operationId: ping
       responses:
         "200":
-          description: The portal is reachable and the token is valid
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/PingResponse"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-  /batches:
-    post:
-      summary: Create a batch from a manifest
-      operationId: createBatch
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/Manifest"
-      responses:
-        "201":
-          description: Batch created, status "uploading"
+          description: The key is known
           content:
             application/json:
               schema:
                 type: object
-                required: [ok, batchId]
+                required: [ok, portal, version]
                 properties:
                   ok: { type: boolean, enum: [true] }
-                  batchId: { type: string, description: URL-safe id used in the following calls }
-        "400":
-          $ref: "#/components/responses/BadRequest"
+                  portal: { type: string, example: Triptych Studios }
+                  version: { type: string, enum: ["2"], description: The plugin API version }
+                  key:
+                    type: object
+                    properties:
+                      label: { type: string }
+                      prefix: { type: string }
+                  storage: { type: string, enum: [r2, supabase] }
+                  url: { type: string, format: uri }
         "401":
           $ref: "#/components/responses/Unauthorized"
-  /batches/{batchId}/files/{key}:
-    put:
-      summary: Upload one file of the batch (raw bytes)
-      operationId: uploadFile
-      parameters:
-        - $ref: "#/components/parameters/batchId"
-        - name: key
-          in: path
-          required: true
-          schema: { type: string }
-          description: The manifest entry's key
-        - name: Content-Length
-          in: header
-          required: true
-          schema: { type: integer, minimum: 1 }
-          description: Always sent. Reject the upload if the received byte count differs.
-        - name: X-ExportX-Filename
-          in: header
-          required: false
-          schema: { type: string }
-          description: URL-encoded original file name (same as the manifest entry's fileName)
-      requestBody:
-        required: true
-        content:
-          application/octet-stream:
-            schema:
-              type: string
-              format: binary
-      responses:
-        "201":
-          description: File stored
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [ok]
-                properties:
-                  ok: { type: boolean, enum: [true] }
-                  fileId: { type: string }
-                  bytes: { type: integer }
-                  url: { type: string, format: uri, description: Reserved for later plugin versions }
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "404":
-          $ref: "#/components/responses/NotFound"
-  /batches/{batchId}/complete:
-    post:
-      summary: Mark the batch complete (or partial)
-      operationId: completeBatch
-      parameters:
-        - $ref: "#/components/parameters/batchId"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/CompleteRequest"
+  /api/plugin/projects:
+    get:
+      summary: The projects a batch can go in (every live project not in the trash, newest first)
+      operationId: listProjects
       responses:
         "200":
-          description: Batch finalised
+          description: The list
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/CompleteResponse"
+                type: object
+                required: [projects]
+                properties:
+                  projects:
+                    type: array
+                    items: { $ref: "#/components/schemas/Project" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/plugin/deliverables:
+    get:
+      summary: A project's Delivery tab as the plugin sees it (boxes and files)
+      operationId: projectDeliverables
+      parameters:
+        - name: projectId
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: The project, its boxes, its files
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProjectView" }
         "401":
           $ref: "#/components/responses/Unauthorized"
         "404":
           $ref: "#/components/responses/NotFound"
+    post:
+      summary: One of four actions, by the body's `action`
+      operationId: deliverablesAction
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: "#/components/schemas/UploadUrlRequest"
+                - $ref: "#/components/schemas/CompleteUploadRequest"
+                - $ref: "#/components/schemas/RegisterRequest"
+                - $ref: "#/components/schemas/BatchRequest"
+              discriminator:
+                propertyName: action
+      responses:
+        "200":
+          description: The action's answer
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/UploadPlan"
+                  - $ref: "#/components/schemas/CompleteUploadResponse"
+                  - $ref: "#/components/schemas/RegisterResponse"
+                  - $ref: "#/components/schemas/BatchResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "502":
+          description: The file store refused (storage_unreachable); the message names the R2 setting to check
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 components:
   securitySchemes:
-    bearer:
+    pluginKey:
       type: http
       scheme: bearer
-      description: Per-user (or per-workstation) token issued by the portal; pasted into ExportX › Settings
-  parameters:
-    batchId:
-      name: batchId
-      in: path
-      required: true
-      schema: { type: string }
+      description: A key made under Settings > ExportX on the portal (tpx_…); kept hashed there, revocable there
   responses:
     BadRequest:
-      description: Invalid manifest, unknown key, or byte-count mismatch
+      description: invalid_body, bad_path, or an unknown action
       content:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
     Unauthorized:
-      description: Missing or invalid bearer token
+      description: missing_plugin_key or bad_plugin_key
       content:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
     NotFound:
-      description: Unknown batch
+      description: No such project (wrong id, or in the trash)
       content:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
   schemas:
     Error:
       type: object
-      required: [ok, error]
+      required: [error, message]
       properties:
-        ok: { type: boolean, enum: [false] }
-        error:
-          type: string
-          description: Shown to the editor verbatim; write it for a person, with what to do next
-    Category:
+        error: { type: string, description: A short code }
+        message: { type: string, description: Shown to the editor as is; says what to do }
+    Project:
       type: object
       required: [id, name]
       properties:
-        id: { type: string, description: Stable id, returned in Manifest.category }
-        name: { type: string, description: Display name }
-    PingResponse:
+        id: { type: string }
+        name: { type: string }
+        client: { type: string }
+        jobNumber: { type: string, nullable: true, example: TRP-2026-4821 }
+        stage: { type: string, nullable: true }
+        createdAt: { type: string }
+    Box:
       type: object
-      required: [ok, portal, version]
+      required: [id, name]
       properties:
-        ok: { type: boolean, enum: [true] }
-        portal: { type: string, example: Triptych Studios }
-        version: { type: string, enum: ["1"], description: Protocol version }
-        categories:
+        id: { type: string }
+        name: { type: string, example: Social cutdowns }
+        spec: { type: string }
+        files: { type: integer, description: How many files the box holds already }
+    ProjectView:
+      type: object
+      required: [project, boxes, files]
+      properties:
+        project:
+          type: object
+          properties:
+            id: { type: string }
+            name: { type: string }
+            jobNumber: { type: string, nullable: true }
+            stage: { type: string, nullable: true }
+            client: { type: string }
+        boxes:
           type: array
-          items: { $ref: "#/components/schemas/Category" }
-    Manifest:
-      type: object
-      required: [source, project, files]
-      properties:
-        source: { type: string, enum: [exportx] }
-        exportxVersion: { type: string, nullable: true, example: 0.2.0 }
-        project: { type: string, example: SpotA_Launch }
-        timeline: { type: string, nullable: true, example: Main Edit }
-        fps: { type: number, nullable: true, example: 23.976 }
-        exportedAt: { type: string, format: date-time }
-        namePattern: { type: string, nullable: true, example: "{yymmdd}_{project}_{label}" }
-        category: { type: string, nullable: true, description: Category id chosen as default in ExportX; a hint only }
+          items: { $ref: "#/components/schemas/Box" }
         files:
           type: array
+          items:
+            type: object
+            properties:
+              id: { type: string }
+              label: { type: string }
+              fileName: { type: string }
+              bytes: { type: integer, nullable: true }
+              kind: { type: string, enum: [image, video, audio, file] }
+              source: { type: string, enum: [portal, exportx] }
+              createdAt: { type: string }
+        readyAt: { type: string, nullable: true, description: When the final delivery was sent; null while the set is still landing }
+        storage: { type: string, enum: [r2, supabase] }
+    UploadUrlRequest:
+      type: object
+      required: [action, projectId, filename, size]
+      properties:
+        action: { type: string, enum: [upload_url] }
+        projectId: { type: string }
+        filename: { type: string, maxLength: 200 }
+        size: { type: integer, minimum: 0 }
+        contentType: { type: string }
+        kind: { type: string, enum: [file, preview], description: preview always gets a put plan }
+        small: { type: boolean, description: Ask for one signed PUT (the answer to a tus plan) }
+        path: { type: string, description: Reuse the path an earlier plan gave }
+    UploadPlan:
+      oneOf:
+        - type: object
+          required: [mode, path, uploadId, partSize, parts]
+          properties:
+            mode: { type: string, enum: [multipart] }
+            path: { type: string }
+            uploadId: { type: string }
+            partSize: { type: integer }
+            parts:
+              type: array
+              items:
+                type: object
+                properties:
+                  partNumber: { type: integer }
+                  url: { type: string, format: uri, description: PUT the slice here, Content-Length set, no key }
+        - type: object
+          required: [mode, path, url]
+          properties:
+            mode: { type: string, enum: [put] }
+            path: { type: string }
+            url: { type: string, format: uri, description: PUT the whole file here with Content-Type set }
+        - type: object
+          required: [mode, bucket, path]
+          properties:
+            mode: { type: string, enum: [tus] }
+            bucket: { type: string }
+            path: { type: string }
+    CompleteUploadRequest:
+      type: object
+      required: [action, projectId, path, uploadId, parts]
+      properties:
+        action: { type: string, enum: [complete_upload] }
+        projectId: { type: string }
+        path: { type: string }
+        uploadId: { type: string }
+        parts:
+          type: array
           minItems: 1
-          items: { $ref: "#/components/schemas/FileEntry" }
-    FileEntry:
+          items:
+            type: object
+            required: [partNumber, etag]
+            properties:
+              partNumber: { type: integer, minimum: 1 }
+              etag: { type: string }
+    CompleteUploadResponse:
       type: object
-      required: [key, fileName, kind, bytes]
       properties:
-        key: { type: string, description: Unique within the batch; used in the PUT path }
-        fileName: { type: string, example: 261018_SpotA_Launch_Social_01.mp4 }
+        ok: { type: boolean, enum: [true] }
+        path: { type: string }
+    RegisterRequest:
+      type: object
+      required: [action, projectId, file_path, fileName, kind, size_bytes]
+      description: See schema/register.schema.json for every field
+      properties:
+        action: { type: string, enum: [register] }
+        projectId: { type: string }
+        file_path: { type: string, description: The path the plan gave back }
+        fileName: { type: string }
         kind: { type: string, enum: [final, cut, still] }
-        label: { type: string, nullable: true, example: Social }
-        deliverableId: { type: string, nullable: true, example: cuts-social-1080 }
-        deliverableName: { type: string, nullable: true, example: Social cuts }
-        timeline: { type: string, nullable: true }
-        format: { type: string, nullable: true, example: mp4 }
-        codec: { type: string, nullable: true, example: H264 }
-        width: { type: integer, nullable: true }
-        height: { type: integer, nullable: true }
-        tcIn: { type: string, nullable: true, example: "01:00:04:00" }
-        tcOut: { type: string, nullable: true, example: "01:00:09:11" }
-        durationFrames: { type: integer, nullable: true }
-        markIndex: { type: integer, nullable: true }
-        bytes: { type: integer, minimum: 0 }
-        modifiedAt: { type: string, format: date-time }
-    CompleteRequest:
+        size_bytes: { type: integer, minimum: 0 }
+        content_type: { type: string }
+        preview_path: { type: string }
+        width: { type: integer }
+        height: { type: integer }
+        duration_seconds: { type: number }
+        box: { type: string, description: The Delivery box to file it under; left out, the kind picks one }
+        deliverableName: { type: string, description: The box of last resort }
+        meta:
+          type: object
+          additionalProperties: true
+    RegisterResponse:
       type: object
+      required: [ok, id, label]
       properties:
+        ok: { type: boolean, enum: [true] }
+        id: { type: string }
+        label: { type: string, example: "Social cutdowns · 261018_GLS_Social_01.mp4" }
+        box:
+          type: object
+          nullable: true
+          properties:
+            id: { type: string }
+            name: { type: string }
+    BatchRequest:
+      type: object
+      required: [action, projectId, uploaded, failed]
+      properties:
+        action: { type: string, enum: [batch] }
+        projectId: { type: string }
+        batchId: { type: string }
+        resolveProject: { type: string }
+        timeline: { type: string }
         uploaded:
           type: array
-          items: { type: string }
+          items: { type: string, description: The labels the register calls returned }
         failed:
           type: array
           items:
             type: object
-            required: [key, error]
+            required: [label, error]
             properties:
-              key: { type: string }
+              label: { type: string }
               error: { type: string }
-    CompleteResponse:
+        bytes: { type: integer }
+    BatchResponse:
       type: object
-      required: [ok, batchId]
+      required: [ok, url]
       properties:
         ok: { type: boolean, enum: [true] }
-        batchId: { type: string }
-        status: { type: string, enum: [complete, partial] }
-        url: { type: string, format: uri, description: Shown as "open on the portal" in the plugin }
+        url: { type: string, format: uri, description: The project's Delivery tab }

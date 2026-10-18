@@ -88,6 +88,13 @@
             <button class="btn" id="btn-export-stills">Stills only</button>
           </div>
           <label class="switch upload-switch hidden" id="upload-switch"><input type="checkbox" id="opt-upload" /><i></i><span>Upload to the portal when done</span></label>
+          <div class="portal-project hidden" id="portal-project-row">
+            <label for="portal-project">Into project</label>
+            <select id="portal-project" aria-label="The portal project the files go in"><option value="">Choose a project…</option></select>
+            <button class="icon-btn" id="btn-portal-refresh" title="Refresh the project list" aria-label="Refresh the project list">
+              <svg viewBox="0 0 16 16"><path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9M13.5 2.5v2.6h-2.6"/></svg>
+            </button>
+          </div>
           <p class="hint" id="export-summary"></p>
           <div class="progress hidden" id="progress">
             <div class="bar"><i id="total-fill"></i></div>
@@ -190,22 +197,17 @@
 
       <section class="step" aria-labelledby="h-portal">
         <h2 id="h-portal">Triptych Studios portal</h2>
-        <p class="hint lead">Finished files can go straight to your portal, where you categorise and share them. Leave the URL empty to keep everything local.</p>
+        <p class="hint lead">Finished files can go straight into a project on your portal, filed into its Delivery boxes, ready for you to check and send to the client. Leave the URL empty to keep everything local.</p>
         <div class="grid2 portal-grid">
-          <label>Portal URL<input type="url" id="portal-url" placeholder="https://portal.triptychstudios.com" spellcheck="false" autocomplete="off" /></label>
-          <label>Access token<input type="password" id="portal-token" placeholder="Paste the token from the portal" autocomplete="off" /></label>
+          <label>Portal URL<input type="url" id="portal-url" placeholder="https://portal.triptychstudios.co" spellcheck="false" autocomplete="off" /></label>
+          <label>Plugin key<input type="password" id="portal-token" placeholder="Paste the key from Settings › ExportX on the portal" autocomplete="off" /></label>
         </div>
         <div class="row wrap portal-row">
           <button class="btn small" id="btn-portal-test">Test connection</button>
           <span class="portal-result" id="portal-result"></span>
         </div>
-        <div class="field">
-          <label for="portal-category">Category for new batches</label>
-          <select id="portal-category"><option value="">Choose on the portal</option></select>
-          <span class="hint" id="portal-category-hint">The list comes from the portal after a successful test. You can always re-categorise there.</span>
-        </div>
         <label class="switch"><input type="checkbox" id="opt-portal-auto" /><i></i><span>Upload every finished batch automatically (same as the switch next to Export)</span></label>
-        <p class="hint">The token is stored encrypted on this computer and never shown again. Each upload creates one batch on the portal with the project, timeline, deliverable, timecodes and size of every file. Building the portal side? See <code>portal-kit/</code> in the repository.</p>
+        <p class="hint">Make the key on the portal under Settings › ExportX; it is stored encrypted here and never shown again. Each batch asks which portal project it goes in (the picker next to Export remembers your choice per Resolve project). Finals land in the box that says final or master, cuts in the social box, stills in the stills box; anything else waits under "Not in a box yet" on the Delivery tab, where you can move any file.</p>
       </section>
 
       <section class="step" aria-labelledby="h-advanced">

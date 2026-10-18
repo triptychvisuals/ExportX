@@ -1,0 +1,22 @@
+{
+  "request": {
+    "action": "register",
+    "projectId": "proj-muzq2ywy-ahaa",
+    "file_path": "deliverables/proj-muzq2ywy-ahaa/m4x1k3-261018_GLS_Social_01.mp4",
+    "fileName": "261018_GLS_Social_01.mp4",
+    "kind": "cut",
+    "size_bytes": 18400000,
+    "content_type": "video/mp4",
+    "width": 1920,
+    "height": 1080,
+    "duration_seconds": 5.5,
+    "deliverableName": "Social cuts",
+    "meta": {
+      "kind": "cut", "deliverableId": "cuts-social-1080", "deliverableName": "Social cuts", "label": "Social", "fileName": "261018_GLS_Social_01.mp4",
+      "timeline": "Main Edit", "resolveProject": "GLS", "format": "mp4", "codec": "H264", "fps": 24,
+      "tcIn": "01:00:04:00", "tcOut": "01:00:09:11", "durationFrames": 132, "markIndex": 1,
+      "batchId": "20261018-5f3a9c1e", "exportxVersion": "0.2.0"
+    }
+  },
+  "response": { "ok": true, "id": "3f1b…", "label": "Social cutdowns · 261018_GLS_Social_01.mp4", "box": { "id": "offer:1:social cutdowns", "name": "Social cutdowns" } }
+}

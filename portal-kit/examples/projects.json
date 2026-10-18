@@ -1,0 +1,6 @@
+{
+  "projects": [
+    { "id": "proj-muzq2ywy-ahaa", "name": "Ghetto Love Story", "client": "Kiraly Payne", "jobNumber": "TRP-2026-4821", "stage": "post", "createdAt": "2026-10-08T16:00:04.986Z", "footage": { "clips": 0, "sentAt": null, "picksSentAt": null } },
+    { "id": "proj-k2n9pq0x-spota", "name": "SpotA Launch", "client": "Acme Beverages", "jobNumber": "TRP-2026-3310", "stage": "post", "createdAt": "2026-10-02T09:12:00.000Z", "footage": { "clips": 12, "sentAt": "2026-10-05T18:00:00.000Z", "picksSentAt": null } }
+  ]
+}

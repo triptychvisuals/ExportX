@@ -1,0 +1,11 @@
+{
+  "project": { "id": "proj-muzq2ywy-ahaa", "name": "Ghetto Love Story", "jobNumber": "TRP-2026-4821", "stage": "post", "client": "Kiraly Payne" },
+  "boxes": [
+    { "id": "offer:0:hero cut 16:9", "name": "Hero cut 16:9", "spec": "ProRes 422 HQ, 4K", "files": 0 },
+    { "id": "offer:1:social cutdowns", "name": "Social cutdowns", "spec": "9:16, 30s", "files": 0 },
+    { "id": "add-on:0:stills", "name": "Stills", "spec": "", "files": 0 }
+  ],
+  "files": [],
+  "readyAt": null,
+  "storage": "r2"
+}
