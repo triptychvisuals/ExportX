@@ -34,7 +34,7 @@ const fontsLink =
 const body = html.slice(html.indexOf('<body>') + '<body>'.length, html.lastIndexOf('</body>')).replace(/<script src="renderer.js"><\/script>\s*/, '');
 
 const note =
-  '<div class="preview-note" role="note">Preview with a fake Resolve and a test-pattern video standing in for your timeline. Hold the pad to mark a cut, tap it for a still, press Export, and try the Settings tab. Nothing is rendered or saved.</div>\n';
+  '<div class="preview-note" role="note">Preview with a fake Resolve and a test-pattern video standing in for your timeline. Hold C to mark a cut, press S for a still, press Export and watch the files render and upload, and try the Settings tab. Nothing is rendered, saved or uploaded.</div>\n';
 const noteCss =
   '.preview-note{background:var(--x-surface);color:var(--x-text-2);border-bottom:1px solid var(--x-line);font-size:12px;padding:8px max(16px,env(safe-area-inset-right,0px)) 8px max(16px,env(safe-area-inset-left,0px));text-align:center}';
 

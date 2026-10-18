@@ -37,6 +37,8 @@ Environment variables honoured in both modes:
    EXPORTX_TEMPLATE      filename template (default {timeline}_{profile})
    EXPORTX_RENDER        "1" to start rendering after queuing
    EXPORTX_HOME          overrides ~/.exportx
+   EXPORTX_PORTAL_URL    Triptych Studios portal URL for --upload (see portal-kit/)
+   EXPORTX_PORTAL_TOKEN  bearer token for --upload
 """
 
 from __future__ import annotations
@@ -48,6 +50,8 @@ import os
 import re
 import sys
 import time
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 # ----------------------------------------------------------------- CONFIG
@@ -528,7 +532,9 @@ def queue_jobs(project, profiles, targets, out_dir: str, template: str, timeline
                     job_id = project.AddRenderJob()
                     if not job_id:
                         raise RuntimeError("AddRenderJob returned nothing")
-                    jobs.append({"jobId": job_id, "timeline": tl_name, "profile": prof["id"], "kind": it["kind"],
+                    jobs.append({"jobId": job_id, "timeline": tl_name, "profile": prof["id"], "profileName": prof["name"],
+                                 "label": it["label"], "kind": it["kind"], "format": prof["format"], "codec": prof["codec"],
+                                 "resolution": prof.get("resolution"), "mark": it["mark"],
                                  "targetDir": it["targetDir"], "fileName": it["fileName"]})
                     where = f" [{it['mark']['tcIn']}{' -> ' + it['mark']['tcOut'] if it['kind'] == 'cut' else ''}]" if it["mark"] else ""
                     log(f"Queued {prof['name']} for '{tl_name}'{where} -> {os.path.join(it['targetDir'], it['fileName'])}")
@@ -542,6 +548,141 @@ def queue_jobs(project, profiles, targets, out_dir: str, template: str, timeline
             except Exception as err:  # noqa: BLE001
                 log(f"Could not switch back to '{current_name}': {err}")
     return jobs, errors, notes
+
+
+# ----------------------------------------------------------------------------- portal upload (protocol v1, see portal-kit/)
+
+def portal_base(url: str) -> str:
+    u = (url or "").strip()
+    if not u:
+        raise SystemExit("No portal URL. Set EXPORTX_PORTAL_URL or pass --portal-url.")
+    if not re.match(r"^https?://", u, re.I):
+        u = "https://" + u
+    u = u.rstrip("/")
+    return u if u.lower().endswith("/api/exportx") else u + "/api/exportx"
+
+
+def find_outputs(target_dir: str, base_name: str, since: float = 0.0) -> list[str]:
+    if not os.path.isdir(target_dir):
+        return []
+    rx = re.compile("^" + re.escape(base_name) + r"(?:[._-]?\d+)?\.[a-z0-9]{1,5}$", re.I)
+    out = []
+    for name in sorted(os.listdir(target_dir)):
+        full = os.path.join(target_dir, name)
+        if rx.match(name) and os.path.isfile(full) and os.path.getsize(full) > 0 and os.path.getmtime(full) >= since - 1:
+            out.append(full)
+    return out
+
+
+def build_manifest(project_name: str, timeline: str, fps: float, jobs: list[dict], template: str, category: str | None, since: float):
+    files, paths, missing = [], {}, []
+    for job in jobs:
+        outputs = find_outputs(job["targetDir"], job["fileName"], since)
+        if not outputs:
+            missing.append(job["fileName"])
+            continue
+        for i, full in enumerate(outputs):
+            key = f"{job['jobId']}-{i + 1}" if len(outputs) > 1 else str(job["jobId"])
+            st = os.stat(full)
+            mark = job.get("mark") or {}
+            res = job.get("resolution") or {}
+            files.append({
+                "key": key, "fileName": os.path.basename(full), "kind": job["kind"], "label": job.get("label"),
+                "deliverableId": job["profile"], "deliverableName": job.get("profileName"), "timeline": job["timeline"],
+                "format": job.get("format"), "codec": job.get("codec"), "width": res.get("width"), "height": res.get("height"),
+                "tcIn": mark.get("tcIn"), "tcOut": mark.get("tcOut"), "durationFrames": mark.get("durationFrames"), "markIndex": mark.get("index"),
+                "bytes": st.st_size, "modifiedAt": _dt.datetime.fromtimestamp(st.st_mtime, _dt.timezone.utc).isoformat().replace("+00:00", "Z"),
+            })
+            paths[key] = full
+    manifest = {
+        "source": "exportx", "exportxVersion": "python", "project": project_name, "timeline": timeline, "fps": fps,
+        "exportedAt": _dt.datetime.now(_dt.timezone.utc).isoformat().replace("+00:00", "Z"),
+        "namePattern": template, "category": category or None, "files": files,
+    }
+    return manifest, paths, missing
+
+
+class _Progress:
+    """File wrapper so urllib streams the body and we can print progress."""
+
+    def __init__(self, path: str, label: str, log=print):
+        self.f = open(path, "rb")  # noqa: SIM115 - closed by urllib / close()
+        self.total = os.path.getsize(path)
+        self.sent = 0
+        self.last = -1
+        self.label = label
+        self.log = log
+
+    def read(self, n=-1):
+        chunk = self.f.read(n)
+        self.sent += len(chunk)
+        pct = int(self.sent * 100 / self.total) if self.total else 100
+        if pct // 10 != self.last // 10:
+            self.last = pct
+            self.log(f"  {self.label}: {pct}%")
+        return chunk
+
+    def __len__(self):
+        return self.total
+
+    def close(self):
+        self.f.close()
+
+
+def portal_request(base: str, token: str, method: str, path: str, body=None, headers=None, timeout=60):
+    hdrs = {"Accept": "application/json", "User-Agent": "ExportX-python", "Authorization": f"Bearer {token}"}
+    hdrs.update(headers or {})
+    data = None
+    if isinstance(body, (dict, list)):
+        data = json.dumps(body).encode("utf-8")
+        hdrs["Content-Type"] = "application/json"
+    elif body is not None:
+        data = body
+    req = urllib.request.Request(base + path, data=data, method=method, headers=hdrs)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            text = resp.read().decode("utf-8")
+            return json.loads(text) if text else {"ok": True}
+    except urllib.error.HTTPError as err:
+        text = err.read().decode("utf-8", "replace")
+        try:
+            msg = json.loads(text).get("error") or text
+        except ValueError:
+            msg = text or str(err)
+        raise RuntimeError(f"Portal {method} {path}: {msg}") from None
+    except urllib.error.URLError as err:
+        raise RuntimeError(f"Portal {method} {path}: {err.reason}") from None
+
+
+def upload_to_portal(url: str, token: str, manifest: dict, paths: dict, log=print) -> dict:
+    if not token:
+        raise SystemExit("No portal token. Set EXPORTX_PORTAL_TOKEN or pass --portal-token.")
+    if not manifest["files"]:
+        raise SystemExit("Nothing to upload: no finished files were found on disk.")
+    base = portal_base(url)
+    ping = portal_request(base, token, "GET", "/ping", timeout=15)
+    log(f"Portal: {ping.get('portal') or base} (API v{ping.get('version', '?')})")
+    created = portal_request(base, token, "POST", "/batches", manifest)
+    batch_id = created.get("batchId") or created.get("id")
+    if not batch_id:
+        raise RuntimeError("The portal did not return a batchId")
+    uploaded, failed = [], []
+    for entry in manifest["files"]:
+        key = entry["key"]
+        body = _Progress(paths[key], entry["fileName"], log)
+        try:
+            portal_request(base, token, "PUT", f"/batches/{urllib.request.quote(batch_id, safe='')}/files/{urllib.request.quote(key, safe='')}", body,
+                           {"Content-Type": "application/octet-stream", "Content-Length": str(body.total),
+                            "X-ExportX-Filename": urllib.request.quote(entry["fileName"], safe="")}, timeout=600)
+            uploaded.append(key)
+        except RuntimeError as err:
+            failed.append({"key": key, "error": str(err)})
+            log(f"  {entry['fileName']}: FAILED {err}")
+        finally:
+            body.close()
+    done = portal_request(base, token, "POST", f"/batches/{urllib.request.quote(batch_id, safe='')}/complete", {"uploaded": uploaded, "failed": failed})
+    log(f"Upload {'finished with errors' if failed else 'complete'}: {len(uploaded)} of {len(manifest['files'])} uploaded" + (f" -> {done.get('url')}" if done.get("url") else ""))
+    return {"batchId": batch_id, "uploaded": uploaded, "failed": failed, "url": done.get("url")}
 
 
 def wait_for_jobs(project, job_ids, interval=2.0, log=print):
@@ -582,6 +723,10 @@ def parse_args(argv):
     p.add_argument("--render", action="store_true", help="start rendering after queuing")
     p.add_argument("--wait", action="store_true", help="wait for rendering to finish (implies --render)")
     p.add_argument("--clear-queue", action="store_true", help="delete existing render jobs first")
+    p.add_argument("--upload", action="store_true", help="after --wait, upload the finished files to the portal (EXPORTX_PORTAL_URL/TOKEN)")
+    p.add_argument("--portal-url", default=os.environ.get("EXPORTX_PORTAL_URL"), help="portal URL for --upload")
+    p.add_argument("--portal-token", default=os.environ.get("EXPORTX_PORTAL_TOKEN"), help="portal bearer token for --upload")
+    p.add_argument("--category", default=None, help="portal category id to suggest for the batch")
     p.add_argument("--mark-cut", nargs=2, action="append", metavar=("IN", "OUT"), default=[], help="add a cut marker (timecodes)")
     p.add_argument("--mark-still", action="append", metavar="TC", default=[], help="add a still marker (timecode)")
     p.add_argument("--clear-marks", choices=["cut", "still", "all"], help="remove ExportX markers from the current timeline")
@@ -625,6 +770,22 @@ def selftest() -> int:
     assert s["FormatWidth"] == 1920 and s["TargetDir"] == "/out" and s["CustomName"] == "name"
     _, only_notes = expand_items([by_id["cuts-social-1080"]], TARGETS, "TL", "P", [], DEFAULT_TEMPLATE, "/out", fixed)
     assert only_notes and "No cuts marked" in only_notes[0]["message"]
+    assert portal_base("portal.example.com/") == "https://portal.example.com/api/exportx"
+    assert portal_base("http://localhost:8787/api/exportx") == "http://localhost:8787/api/exportx"
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp:
+        for name in ("261017_P_Final.mp4", "261017_P_Still_01_0086500.tif", "261017_P_Still_010_0086500.tif", "other.mp4"):
+            Path(tmp, name).write_bytes(b"x" * 10)
+        assert [os.path.basename(f) for f in find_outputs(tmp, "261017_P_Final")] == ["261017_P_Final.mp4"]
+        assert [os.path.basename(f) for f in find_outputs(tmp, "261017_P_Still_01")] == ["261017_P_Still_01_0086500.tif"]
+        pjobs = [{"jobId": "j1", "timeline": "TL", "profile": "final-4k-h265", "profileName": "Final 4K", "label": "Final", "kind": "final",
+                  "format": "mp4", "codec": "H265", "resolution": {"width": 3840, "height": 2160}, "mark": None, "targetDir": tmp, "fileName": "261017_P_Final"},
+                 {"jobId": "j2", "timeline": "TL", "profile": "x", "profileName": "X", "label": "X", "kind": "cut", "format": "mp4", "codec": "H264",
+                  "resolution": None, "mark": None, "targetDir": tmp, "fileName": "missing"}]
+        manifest, paths, missing = build_manifest("P", "TL", 24.0, pjobs, DEFAULT_TEMPLATE, "social", 0)
+        assert manifest["source"] == "exportx" and manifest["category"] == "social" and missing == ["missing"]
+        assert manifest["files"][0]["key"] == "j1" and manifest["files"][0]["bytes"] == 10 and manifest["files"][0]["width"] == 3840
+        assert paths["j1"].endswith("261017_P_Final.mp4") and "path" not in manifest["files"][0]
     try:
         normalize_profile({"id": "x", "name": "X", "format": "mp4", "codec": "H264", "subfolder": "../up"})
     except ValueError:
@@ -722,6 +883,11 @@ def main(argv=None) -> int:
     if not jobs:
         return 1
 
+    if args.upload and not (args.wait or (not argv and CONFIG["wait"])):
+        raise SystemExit("--upload needs --wait (the files have to exist before they can be uploaded).")
+    if args.upload:
+        portal_base(args.portal_url)  # fail early on a missing URL
+    queued_at = time.time()
     should_render = args.render or args.wait or os.environ.get("EXPORTX_RENDER") == "1" or (not argv and CONFIG["render"])
     if should_render:
         ids = [j["jobId"] for j in jobs]
@@ -731,11 +897,23 @@ def main(argv=None) -> int:
         if args.wait or (not argv and CONFIG["wait"]):
             statuses = wait_for_jobs(project, ids)
             failed = [jid for jid, s in statuses.items() if s["status"] != "complete"]
+            for jid in failed:
+                print(f"  {jid}: {statuses[jid]['status']} {statuses[jid].get('error') or ''}")
+            if not failed:
+                print("All renders complete.")
+            if args.upload:
+                done_jobs = [j for j in jobs if statuses.get(j["jobId"], {}).get("status") == "complete"]
+                tl = project.GetCurrentTimeline()
+                fps = parse_fps(tl.GetSetting("timelineFrameRate")) if tl else None
+                manifest, paths, missing = build_manifest(project.GetName(), ", ".join(timelines) if timelines else (tl.GetName() if tl else ""),
+                                                          fps, done_jobs, args.name, args.category, queued_at)
+                for name in missing:
+                    print(f"  no file found for {name}")
+                result = upload_to_portal(args.portal_url, args.portal_token, manifest, paths)
+                if result["failed"]:
+                    return 3
             if failed:
-                for jid in failed:
-                    print(f"  {jid}: {statuses[jid]['status']} {statuses[jid].get('error') or ''}")
                 return 2
-            print("All renders complete.")
     return 0
 
 

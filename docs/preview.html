@@ -74,7 +74,7 @@ code { font-family: var(--x-font-mono); font-size: 11.5px; color: var(--x-text-2
 }
 .hint { margin: 10px 0 0; color: var(--x-text-3); font-size: 12px; }
 .hint.warn { color: var(--x-warn); }
-.hint.top { margin: 0 0 12px; }
+.hint.lead { margin: 0 0 12px; }
 .hint-inline { color: var(--x-text-3); font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .count { color: var(--x-text-3); font-size: 11px; font-variant-numeric: tabular-nums; }
 
@@ -177,6 +177,8 @@ input[type='text']:focus { outline: none; border-color: var(--x-accent); }
 }
 .export-bar .btn.big + .row { margin-top: 8px; }
 .export-bar .hint { min-height: 18px; margin-top: 8px; }
+.export-bar .upload-switch { display: flex; margin-top: 10px; }
+.export-bar .hint.bg { min-height: 0; margin-top: 6px; font-size: 11.5px; }
 
 .right {
   display: flex; flex-direction: column;
@@ -291,6 +293,21 @@ input[type='text']:focus { outline: none; border-color: var(--x-accent); }
 .file .state { color: var(--x-text-2); font-size: 11.5px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .file.failed .state { color: var(--x-bad); }
 .file .err { grid-column: 2 / -1; color: #ffb4ae; font-size: 11.5px; }
+.file.up-uploading .st { background: var(--x-accent); box-shadow: 0 0 0 3px rgba(59, 123, 255, 0.2); }
+.file.up-uploaded .st { background: var(--x-ok); box-shadow: 0 0 0 2px rgba(52, 199, 89, 0.3); }
+.file.up-failed .state { color: var(--x-bad); }
+.file.up-uploading .state { color: var(--x-accent-2); }
+
+/* upload to the portal: sits above the file list */
+.upload { display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: 'text actions' 'bar bar'; align-items: center; gap: 8px 12px; margin-top: 12px; padding: 10px 12px; border: 1px solid var(--x-line); border-radius: var(--x-radius); background: var(--x-surface); }
+.upload > span:first-child { grid-area: text; font-size: 12.5px; color: var(--x-text-2); min-width: 0; }
+.upload .actions { grid-area: actions; display: flex; align-items: center; gap: 12px; }
+.upload .bar { grid-area: bar; height: 4px; border-radius: 2px; background: var(--x-line-2); overflow: hidden; }
+.upload .bar i { display: block; height: 100%; width: 0; background: var(--x-accent); transition: width 0.4s ease, background var(--x-fast); }
+.upload.done .bar i { background: var(--x-ok); }
+.upload.bad .bar i { background: var(--x-bad); }
+.upload.done > span:first-child { color: var(--x-text); }
+.upload.bad > span:first-child { color: #ffb4ae; }
 
 /* ------------------------------------------------------------ preview viewer (right pane) */
 
@@ -410,6 +427,18 @@ input[type='text']:focus { outline: none; border-color: var(--x-accent); }
 .deliv-note { margin: 8px 0 0; color: var(--x-text-3); font-size: 11.5px; }
 .deliv-note.warn { color: var(--x-warn); }
 
+/* portal settings */
+.portal-grid { padding-top: 0; }
+.portal-grid input[type='url'], .portal-grid input[type='password'], .field select { width: 100%; height: 32px; padding: 0 10px; border-radius: var(--x-radius); border: 1px solid var(--x-line-2); background: var(--x-surface-2); color: var(--x-text); font: 13px var(--x-font-ui); }
+.portal-grid input:focus, .field select:focus { outline: none; border-color: var(--x-accent); }
+.portal-row { margin-top: 12px; }
+.portal-row + .field { margin-top: 14px; }
+.portal-result { font-size: 12px; color: var(--x-text-3); }
+.portal-result.ok { color: var(--x-ok); }
+.portal-result.bad { color: var(--x-bad); }
+.field select { max-width: 320px; }
+.field .hint { margin-top: 2px; }
+
 /* keys settings */
 .keyrows { display: flex; flex-direction: column; gap: 6px; }
 .keyrow { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 36px; padding: 0 2px; border-bottom: 1px solid var(--x-line); font-size: 13px; }
@@ -457,7 +486,7 @@ input[type='text']:focus { outline: none; border-color: var(--x-accent); }
 
 .preview-note{background:var(--x-surface);color:var(--x-text-2);border-bottom:1px solid var(--x-line);font-size:12px;padding:8px max(16px,env(safe-area-inset-right,0px)) 8px max(16px,env(safe-area-inset-left,0px));text-align:center}
 </style>
-<div class="preview-note" role="note">Preview with a fake Resolve and a test-pattern video standing in for your timeline. Hold the pad to mark a cut, tap it for a still, press Export, and try the Settings tab. Nothing is rendered or saved.</div>
+<div class="preview-note" role="note">Preview with a fake Resolve and a test-pattern video standing in for your timeline. Hold C to mark a cut, press S for a still, press Export and watch the files render and upload, and try the Settings tab. Nothing is rendered, saved or uploaded.</div>
 
     <header class="top">
       <div class="brand" title="ExportX">
@@ -535,11 +564,13 @@ input[type='text']:focus { outline: none; border-color: var(--x-accent); }
             <button class="btn" id="btn-export-cuts">Cuts only</button>
             <button class="btn" id="btn-export-stills">Stills only</button>
           </div>
+          <label class="switch upload-switch hidden" id="upload-switch"><input type="checkbox" id="opt-upload" /><i></i><span>Upload to the portal when done</span></label>
           <p class="hint" id="export-summary"></p>
           <div class="progress hidden" id="progress">
             <div class="bar"><i id="total-fill"></i></div>
             <span id="total-text"></span>
           </div>
+          <p class="hint bg hidden" id="bg-hint">Runs in the background: keep marking, switch to Resolve or minimise this window. A notification pops when it's done.</p>
         </div>
       </section>
 
@@ -580,6 +611,14 @@ input[type='text']:focus { outline: none; border-color: var(--x-accent); }
           <span class="play" id="play-state"><i></i><span>stopped</span></span>
           <span class="tc" id="playhead">--:--:--:--</span>
         </div>
+        <div class="upload hidden" id="upload">
+          <span id="upload-text"></span>
+          <span class="actions">
+            <button class="link hidden" id="btn-upload-open">open on the portal</button>
+            <button class="btn small" id="btn-upload">Upload</button>
+          </span>
+          <div class="bar"><i id="upload-fill"></i></div>
+        </div>
         <ul class="files" id="jobs"></ul>
       </section>
     </main>
@@ -602,7 +641,7 @@ input[type='text']:focus { outline: none; border-color: var(--x-accent); }
 
       <section class="step" aria-labelledby="h-deliverables">
         <h2 id="h-deliverables">Deliverables</h2>
-        <p class="hint top">
+        <p class="hint lead">
           Formats and codecs are read from your Resolve, and every file is rendered by Resolve's own engine. To carry over advanced Deliver settings, start a deliverable from one of your Deliver presets.
         </p>
         <ul class="delivs" id="settings-profiles"></ul>
@@ -624,6 +663,26 @@ input[type='text']:focus { outline: none; border-color: var(--x-accent); }
           <div class="keyrow"><span>Export everything</span><span class="keyfixed"><kbd>⌘</kbd><kbd>↩</kbd></span></div>
         </div>
         <p class="hint" id="keys-hint">Click a key to change it, then press the new one. Keys work while the ExportX window is focused.</p>
+      </section>
+
+      <section class="step" aria-labelledby="h-portal">
+        <h2 id="h-portal">Triptych Studios portal</h2>
+        <p class="hint lead">Finished files can go straight to your portal, where you categorise and share them. Leave the URL empty to keep everything local.</p>
+        <div class="grid2 portal-grid">
+          <label>Portal URL<input type="url" id="portal-url" placeholder="https://portal.triptychstudios.com" spellcheck="false" autocomplete="off" /></label>
+          <label>Access token<input type="password" id="portal-token" placeholder="Paste the token from the portal" autocomplete="off" /></label>
+        </div>
+        <div class="row wrap portal-row">
+          <button class="btn small" id="btn-portal-test">Test connection</button>
+          <span class="portal-result" id="portal-result"></span>
+        </div>
+        <div class="field">
+          <label for="portal-category">Category for new batches</label>
+          <select id="portal-category"><option value="">Choose on the portal</option></select>
+          <span class="hint" id="portal-category-hint">The list comes from the portal after a successful test. You can always re-categorise there.</span>
+        </div>
+        <label class="switch"><input type="checkbox" id="opt-portal-auto" /><i></i><span>Upload every finished batch automatically (same as the switch next to Export)</span></label>
+        <p class="hint">The token is stored encrypted on this computer and never shown again. Each upload creates one batch on the portal with the project, timeline, deliverable, timecodes and size of every file. Building the portal side? See <code>portal-kit/</code> in the repository.</p>
       </section>
 
       <section class="step" aria-labelledby="h-advanced">
@@ -724,7 +783,7 @@ input[type='text']:focus { outline: none; border-color: var(--x-accent); }
     return list;
   }
 
-  const listeners = { log: [], progress: [], done: [], playhead: [], marks: [], preview: [] };
+  const listeners = { log: [], progress: [], done: [], playhead: [], marks: [], preview: [], upload: [] };
   const sub = (k) => (cb) => {
     listeners[k].push(cb);
     return () => {
@@ -756,7 +815,13 @@ input[type='text']:focus { outline: none; border-color: var(--x-accent); }
     if (opts && opts.underscoreSpaces) out = out.replace(/\s+/g, '_').replace(/_{2,}/g, '_');
     return out;
   };
-  let settings = { targetDir: '/Volumes/Deliver/SpotA_Launch', nameTemplate: '{yymmdd}_{project}_{label}', underscoreSpaces: true, selectedProfiles: null, clearExisting: false, startRender: true, keyCut: 'c', keyStill: 's' };
+  const CATEGORIES = [
+    { id: 'commercial', name: 'Commercial' }, { id: 'music-video', name: 'Music video' }, { id: 'social', name: 'Social' }, { id: 'event', name: 'Event' }, { id: 'stills', name: 'Stills' },
+  ];
+  let settings = {
+    targetDir: '/Volumes/Deliver/SpotA_Launch', nameTemplate: '{yymmdd}_{project}_{label}', underscoreSpaces: true, selectedProfiles: null, clearExisting: false, startRender: true, keyCut: 'c', keyStill: 's',
+    portalUrl: 'https://portal.triptychstudios.com', portalTokenSet: true, portalTokenEncrypted: true, portalAuto: true, portalCategory: 'commercial', portalName: 'Triptych Studios', portalCategories: CATEGORIES,
+  };
 
   function plan(req) {
     const tls = req.timelines || ['Main Edit'];
@@ -835,8 +900,54 @@ input[type='text']:focus { outline: none; border-color: var(--x-accent); }
     if (renderTimer) clearInterval(renderTimer);
     renderTimer = setInterval(tick, 350);
   }
+  function finishRender() {
+    if (!renderTimer) return;
+    for (const s of statuses.values()) if (s.status !== 'complete') { s.status = 'complete'; s.percent = 100; }
+    tick();
+  }
 
-  window.__exportxMock = { emit, get jobs() { return jobs; }, setPlaying: (v) => { playing = v; } };
+  // ---- fake portal upload
+  let uploadTimer = null;
+  let lastUpload = null;
+  let batchUpload = settings.portalAuto;
+  function startUpload(trigger) {
+    if (!settings.portalUrl) throw new Error('No portal URL is set. Add it under Settings › Portal.');
+    if (uploadTimer) throw new Error('An upload is already running');
+    const done = jobs.filter((j) => (statuses.get(j.jobId) || {}).status === 'complete');
+    if (!done.length) throw new Error('No finished files to upload yet.');
+    const files = done.map((j, i) => ({ key: j.jobId, jobId: j.jobId, fileName: `${j.fileName}.${j.kind === 'still' ? 'tif' : 'mp4'}`, bytes: j.kind === 'still' ? 24e6 : j.kind === 'cut' ? 180e6 : 2.4e9 }));
+    const totalBytes = files.reduce((n, f) => n + f.bytes, 0);
+    log(`Uploading ${files.length} file(s) (${(totalBytes / 1048576).toFixed(1)} MB) to ${settings.portalUrl}/api/exportx`);
+    emit('upload', { phase: 'start', trigger, portal: settings.portalUrl, files, totalBytes, missing: [] });
+    let i = 0;
+    let pct = 0;
+    const sent = () => files.slice(0, i).reduce((n, f) => n + f.bytes, 0) + (files[i] ? (files[i].bytes * pct) / 100 : 0);
+    uploadTimer = setInterval(() => {
+      if (i >= files.length) {
+        clearInterval(uploadTimer);
+        uploadTimer = null;
+        lastUpload = { batchId: '20261018-5f3a9c1e', url: `${settings.portalUrl}/batches/20261018-5f3a9c1e`, uploaded: files.map((f) => f.key), failed: [] };
+        log(`Upload complete: ${files.length} of ${files.length} uploaded → ${lastUpload.url}`);
+        emit('upload', { phase: 'done', ...lastUpload, missing: [] });
+        return;
+      }
+      pct = Math.min(100, pct + 20 + Math.round(Math.random() * 15));
+      const f = files[i];
+      const percentTotal = Math.round((sent() / totalBytes) * 100);
+      emit('upload', { phase: 'file', key: f.key, jobId: f.jobId, state: pct >= 100 ? 'uploaded' : 'uploading', percent: pct, error: null, percentTotal });
+      if (pct >= 100) { i += 1; pct = 0; }
+    }, 300);
+    return { files, totalBytes, missing: [] };
+  }
+  const origTick = tick;
+  tick = function tickWithUpload() { // eslint-disable-line no-func-assign
+    origTick();
+    if (!renderTimer && batchUpload && settings.portalUrl && !uploadTimer && !lastUpload) {
+      try { startUpload('auto'); } catch (err) { emit('upload', { phase: 'error', error: err.message }); }
+    }
+  };
+
+  window.__exportxMock = { emit, get jobs() { return jobs; }, setPlaying: (v) => { playing = v; }, finishRender };
 
   window.exportx = {
     status: async () => ({ connected: true, mock: true, product: 'DaVinci Resolve Studio', version: '20.1', project: 'SpotA_Launch', timeline: 'Main Edit', timelines, rendering: Boolean(renderTimer), userDir: '/Users/you/.exportx' }),
@@ -902,9 +1013,12 @@ input[type='text']:focus { outline: none; border-color: var(--x-accent); }
     seek: async (abs) => { playheadAbs = abs; return tc(abs); },
     plan: async (req) => plan(req),
     queue: async (req) => {
+      if (uploadTimer) throw new Error('Wait for the current upload to finish before exporting again.');
       const { items, notes } = plan(req);
       jobs = items.map((it, i) => ({ jobId: `job-${Date.now()}-${i}`, ...it, format: 'x', codec: 'y' }));
       statuses = new Map(jobs.map((j) => [j.jobId, { jobId: j.jobId, status: 'ready', percent: 0, error: null }]));
+      lastUpload = null;
+      if (typeof req.upload === 'boolean') { batchUpload = req.upload; settings.portalAuto = req.upload; } else batchUpload = settings.portalAuto;
       for (const j of jobs) log(`Queued "${j.profileName}" → ${j.targetDir}/${j.fileName}`);
       if (req.startRender && jobs.length) startRender();
       return { jobs, errors: [], notes, rendering: Boolean(req.startRender && jobs.length) };
@@ -921,9 +1035,26 @@ input[type='text']:focus { outline: none; border-color: var(--x-accent); }
     },
     jobStatus: async () => jobs.map((j) => statuses.get(j.jobId)),
     getSettings: async () => ({ ...settings }),
-    saveSettings: async (s) => { settings = { ...settings, ...(s || {}) }; return { ...settings }; },
+    saveSettings: async (s) => {
+      const patch = { ...(s || {}) };
+      if (Object.prototype.hasOwnProperty.call(patch, 'portalToken')) { patch.portalTokenSet = Boolean(patch.portalToken); delete patch.portalToken; }
+      settings = { ...settings, ...patch };
+      return { ...settings };
+    },
+    portalTest: async ({ portalUrl } = {}) => {
+      await new Promise((r) => setTimeout(r, 500));
+      const url = String(portalUrl || settings.portalUrl || '').trim();
+      if (!url) throw new Error('Enter the portal URL first.');
+      if (/bad|fail/.test(url)) throw new Error(`Portal GET /ping: getaddrinfo ENOTFOUND ${url.replace(/^https?:\/\//, '')}`);
+      settings.portalName = 'Triptych Studios';
+      settings.portalCategories = CATEGORIES;
+      log(`Portal OK: Triptych Studios (API v1), ${CATEGORIES.length} categories`);
+      return { ok: true, portal: 'Triptych Studios', version: '1', categories: CATEGORIES, url: `${url.replace(/\/+$/, '')}/api/exportx` };
+    },
+    portalUpload: async () => startUpload('manual'),
+    openUrl: async (url) => { log(`Would open ${url}`); return true; },
     logHistory: async () => [`${stamp()}Preview mode: this is a fake Resolve. Nothing is rendered.`, `${stamp()}Connected to DaVinci Resolve Studio 20.1 (preview)`],
-    onLog: sub('log'), onProgress: sub('progress'), onDone: sub('done'), onPlayhead: sub('playhead'), onMarks: sub('marks'), onPreview: sub('preview'),
+    onLog: sub('log'), onProgress: sub('progress'), onDone: sub('done'), onPlayhead: sub('playhead'), onMarks: sub('marks'), onPreview: sub('preview'), onUpload: sub('upload'),
   };
 })();
 
@@ -993,7 +1124,22 @@ input[type='text']:focus { outline: none; border-color: var(--x-accent); }
     progress: $('progress'),
     totalFill: $('total-fill'),
     totalText: $('total-text'),
+    bgHint: $('bg-hint'),
     jobs: $('jobs'),
+    // portal upload
+    uploadSwitch: $('upload-switch'),
+    optUpload: $('opt-upload'),
+    upload: $('upload'),
+    uploadText: $('upload-text'),
+    uploadFill: $('upload-fill'),
+    btnUpload: $('btn-upload'),
+    btnUploadOpen: $('btn-upload-open'),
+    portalUrl: $('portal-url'),
+    portalToken: $('portal-token'),
+    btnPortalTest: $('btn-portal-test'),
+    portalResult: $('portal-result'),
+    portalCategory: $('portal-category'),
+    optPortalAuto: $('opt-portal-auto'),
     // settings
     nameTemplate: $('name-template'),
     tokens: $('tokens'),
@@ -1040,6 +1186,9 @@ input[type='text']:focus { outline: none; border-color: var(--x-accent); }
     openDelivs: new Set(),
     resolvePlayhead: null,
     preview: { status: null, source: 'preview', mediaTime: null, loadedFile: null, rvfc: 0, seekTimer: null },
+    lastSummary: null,
+    portal: { url: '', tokenSet: false, name: '', categories: [] },
+    upload: { running: false, files: new Map(), result: null, error: null, total: 0, percentTotal: 0 },
   };
 
   // ------------------------------------------------------------ utilities
@@ -1139,6 +1288,7 @@ input[type='text']:focus { outline: none; border-color: var(--x-accent); }
       timelines: pickedTimelines(),
       clearExisting: el.optClear.checked,
       startRender: Boolean(startRender),
+      upload: portalConfigured() ? el.optUpload.checked : undefined,
     };
   }
 
@@ -1156,6 +1306,7 @@ input[type='text']:focus { outline: none; border-color: var(--x-accent); }
     el.btnExportStills.disabled = !(ready && stills > 0 && countIncluded('stills') > 0);
     el.btnStop.classList.toggle('hidden', !state.rendering);
     el.btnGo.classList.toggle('hidden', state.rendering);
+    el.bgHint.classList.toggle('hidden', !state.rendering);
     el.keyCut.disabled = !isConnected();
     el.keyStill.disabled = !isConnected();
     const n = state.plan.items.length;
@@ -1796,7 +1947,7 @@ input[type='text']:focus { outline: none; border-color: var(--x-accent); }
       if (pv.paused) followResolve();
     });
     pv.addEventListener('error', () => {
-      showBanner('The preview file could not be played. Re-render it from step 2.', 'info');
+      showBanner('The preview file could not be played. Use "re-render" under the picture.', 'info');
     });
     pv.addEventListener('click', togglePlay);
     el.pvOverlay.addEventListener('click', togglePlay);
@@ -1907,13 +2058,13 @@ input[type='text']:focus { outline: none; border-color: var(--x-accent); }
     el.stillsCount.textContent = String(stills.length);
     el.cuts.innerHTML = '';
     el.stills.innerHTML = '';
-    if (!cuts.length) el.cuts.innerHTML = '<li class="none">None yet. Hold the pad while it plays.</li>';
+    if (!cuts.length) el.cuts.innerHTML = `<li class="none">None yet. Hold ${escapeHtml(keyName(state.keys.cut))} while it plays.</li>`;
     else for (const m of cuts) el.cuts.appendChild(markRow(m));
-    if (!stills.length) el.stills.innerHTML = '<li class="none">None yet. Tap the pad on a frame.</li>';
+    if (!stills.length) el.stills.innerHTML = `<li class="none">None yet. Press ${escapeHtml(keyName(state.keys.still))} on a frame.</li>`;
     else for (const m of stills) el.stills.appendChild(markRow(m));
     const warn = [];
-    if (cuts.length && !countIncluded('cuts')) warn.push('Tick a "per cut" deliverable in step 1 to export the cuts.');
-    if (stills.length && !countIncluded('stills')) warn.push('Tick a "per still" deliverable in step 1 to export the stills.');
+    if (cuts.length && !countIncluded('cuts')) warn.push('Tick a "per cut" deliverable under What to export to export the cuts.');
+    if (stills.length && !countIncluded('stills')) warn.push('Tick a "per still" deliverable under What to export to export the stills.');
     el.captureHint.className = `hint${warn.length ? ' warn' : ''}`;
     el.captureHint.textContent = warn.length
       ? warn.join(' ')
@@ -2135,7 +2286,7 @@ input[type='text']:focus { outline: none; border-color: var(--x-accent); }
     const req = currentRequest(false);
     if (!isConnected() || !req.profileIds.length) {
       state.plan = { items: [], notes: [] };
-      el.exportSummary.textContent = req.profileIds.length ? '' : 'Tick at least one deliverable in step 1.';
+      el.exportSummary.textContent = req.profileIds.length ? '' : 'Tick at least one deliverable under What to export.';
       updateButtons();
       return;
     }
@@ -2155,7 +2306,7 @@ input[type='text']:focus { outline: none; border-color: var(--x-accent); }
     if (finals) parts.push(plural(finals, 'final export'));
     if (cuts) parts.push(plural(cuts, 'cut'));
     if (stills) parts.push(plural(stills, 'still'));
-    const where = req.targetDir ? ` → ${slash(req.targetDir)}` : ' → choose a folder in step 1';
+    const where = req.targetDir ? ` → ${slash(req.targetDir)}` : ' → choose a folder under Save to';
     const noteText = notes.map((n) => n.message.replace(/ on ".*"$/, '')).filter((v, i, a) => a.indexOf(v) === i);
     el.exportSummary.textContent = (parts.length ? parts.join(' · ') + where : 'Nothing to export yet.') + (noteText.length ? ` · ${noteText.join(' · ')}` : '');
     updateButtons();
@@ -2165,15 +2316,21 @@ input[type='text']:focus { outline: none; border-color: var(--x-accent); }
     el.jobs.innerHTML = '';
     for (const job of state.jobs) {
       const st = state.statuses.get(job.jobId) || { status: 'ready', percent: 0 };
+      const up = state.upload.files.get(job.jobId);
       const li = document.createElement('li');
-      li.className = `file ${st.status}`;
+      li.className = `file ${st.status}${up ? ` up-${up.state}` : ''}`;
       const where = job.mark ? `<small>${escapeHtml(job.mark.tcIn)}${job.kind === 'cut' ? ` → ${escapeHtml(job.mark.tcOut)}` : ''}</small>` : '';
-      const stateText = st.status === 'complete' ? 'done' : st.status === 'rendering' ? `${st.percent}%` : st.status === 'ready' ? 'waiting' : st.status;
+      let stateText = st.status === 'complete' ? 'done' : st.status === 'rendering' ? `${st.percent}%` : st.status === 'ready' ? 'waiting' : st.status;
+      if (up && up.state === 'uploading') stateText = `uploading ${up.percent}%`;
+      else if (up && up.state === 'uploaded') stateText = 'on the portal';
+      else if (up && up.state === 'failed') stateText = 'upload failed';
+      else if (up && up.state === 'queued') stateText = 'to upload';
+      const error = st.error || (up && up.error) || '';
       li.innerHTML =
         `<i class="st"></i>` +
         `<span class="fn" title="${escapeHtml(slash(job.targetDir))}/${escapeHtml(job.fileName)}">${escapeHtml(job.fileName)}${where}</span>` +
         `<span class="state">${escapeHtml(stateText)}</span>` +
-        (st.error ? `<span class="err">${escapeHtml(st.error)}</span>` : '');
+        (error ? `<span class="err">${escapeHtml(error)}</span>` : '');
       el.jobs.appendChild(li);
     }
   }
@@ -2202,8 +2359,8 @@ input[type='text']:focus { outline: none; border-color: var(--x-accent); }
 
   async function queue(startRender, targets) {
     const req = currentRequest(startRender, targets);
-    if (!req.profileIds.length) return showBanner('Tick at least one deliverable in step 1.');
-    if (!req.targetDir) return showBanner('Choose where to save in step 1.');
+    if (!req.profileIds.length) return showBanner('Tick at least one deliverable under What to export.');
+    if (!req.targetDir) return showBanner('Choose where to save first (Save to).');
     showBanner(null);
     setBusy(true);
     try {
@@ -2211,8 +2368,11 @@ input[type='text']:focus { outline: none; border-color: var(--x-accent); }
       state.jobs = jobs;
       state.statuses = new Map();
       state.rendering = rendering;
+      state.lastSummary = null;
+      resetUpload();
       renderJobs();
       renderTotal(null);
+      renderPortalControls();
       if (errors.length) {
         showBanner(`${errors.length} file(s) could not be queued: ${errors.map((e) => `${e.profileName} (${e.message})`).join('; ')}`);
       } else if (!jobs.length) {
@@ -2233,6 +2393,174 @@ input[type='text']:focus { outline: none; border-color: var(--x-accent); }
     } catch (err) {
       showBanner(err.message);
     }
+  }
+
+  // ------------------------------------------------------------ portal: upload finished files
+
+  function portalConfigured() {
+    return Boolean(state.portal.url);
+  }
+
+  function portalName() {
+    return state.portal.name || 'the portal';
+  }
+
+  function resetUpload() {
+    state.upload = { running: false, files: new Map(), result: null, error: null, total: 0, percentTotal: 0 };
+  }
+
+  function uploadedCount() {
+    let n = 0;
+    for (const f of state.upload.files.values()) if (f.state === 'uploaded') n += 1;
+    return n;
+  }
+
+  function renderPortalControls() {
+    const on = portalConfigured();
+    el.uploadSwitch.classList.toggle('hidden', !on);
+    el.uploadSwitch.querySelector('span').textContent = `Upload to ${portalName()} when done`;
+    const up = state.upload;
+    const finished = Boolean(state.lastSummary && state.lastSummary.done && state.lastSummary.complete > 0);
+    const show = on && (up.running || up.result || up.error || finished);
+    el.upload.classList.toggle('hidden', !show);
+    if (!show) return;
+    const pct = up.running ? up.percentTotal : up.result ? 100 : 0;
+    el.uploadFill.style.width = `${pct}%`;
+    el.upload.classList.toggle('done', Boolean(up.result && !up.result.failed.length));
+    el.upload.classList.toggle('bad', Boolean(up.error || (up.result && up.result.failed.length)));
+    el.btnUpload.disabled = up.running || state.rendering;
+    el.btnUpload.textContent = up.running ? 'Uploading…' : up.result || up.error ? 'Upload again' : `Upload to ${portalName()}`;
+    el.btnUploadOpen.classList.toggle('hidden', !(up.result && up.result.url));
+    let text;
+    if (up.running) text = `Uploading to ${portalName()} · ${pct}% · ${uploadedCount()} of ${up.total} sent`;
+    else if (up.error) text = `Upload failed: ${up.error}`;
+    else if (up.result && up.result.failed.length) text = `${up.result.uploaded.length} of ${up.total} uploaded, ${plural(up.result.failed.length, 'file')} failed`;
+    else if (up.result) text = `All ${plural(up.total, 'file')} on ${portalName()}. Categorise and share them there.`;
+    else text = `Finished files are ready to send to ${portalName()}.`;
+    el.uploadText.textContent = text;
+  }
+
+  function onUploadEvent(ev) {
+    const up = state.upload;
+    if (ev.phase === 'start') {
+      resetUpload();
+      state.upload.running = true;
+      state.upload.total = ev.files.length;
+      state.upload.files = new Map(ev.files.map((f) => [f.jobId, { key: f.key, state: 'queued', percent: 0, error: null }]));
+      showBanner(null);
+    } else if (ev.phase === 'file') {
+      up.files.set(ev.jobId, { key: ev.key, state: ev.state, percent: ev.percent, error: ev.error || null });
+      up.percentTotal = ev.percentTotal || 0;
+    } else if (ev.phase === 'done') {
+      up.running = false;
+      up.result = { batchId: ev.batchId, url: ev.url || null, uploaded: ev.uploaded || [], failed: ev.failed || [] };
+    } else if (ev.phase === 'error') {
+      up.running = false;
+      up.error = ev.error;
+    }
+    renderJobs();
+    renderPortalControls();
+  }
+
+  async function uploadNow() {
+    el.btnUpload.disabled = true;
+    try {
+      await api.portalUpload({ category: el.portalCategory.value || undefined });
+    } catch (err) {
+      state.upload.error = err.message;
+      renderPortalControls();
+    }
+  }
+
+  function tokenPlaceholder() {
+    return state.portal.tokenSet ? 'Saved · paste a new one to replace it' : 'Paste the token from the portal';
+  }
+
+  function renderCategories(selected) {
+    el.portalCategory.innerHTML = '';
+    el.portalCategory.appendChild(option('', 'Choose on the portal', !selected));
+    let found = !selected;
+    for (const c of state.portal.categories) {
+      const hit = c.id === selected;
+      if (hit) found = true;
+      el.portalCategory.appendChild(option(c.id, c.name, hit));
+    }
+    if (!found && selected) el.portalCategory.appendChild(option(selected, selected, true));
+  }
+
+  function setPortalResult(text, kind) {
+    el.portalResult.textContent = text || '';
+    el.portalResult.className = `portal-result${kind ? ` ${kind}` : ''}`;
+  }
+
+  async function testPortal() {
+    const url = el.portalUrl.value.trim();
+    if (!url) return setPortalResult('Enter the portal URL first.', 'bad');
+    const typed = el.portalToken.value.trim();
+    setPortalResult('Connecting…', '');
+    el.btnPortalTest.disabled = true;
+    try {
+      const res = await api.portalTest({ portalUrl: url, token: typed || undefined });
+      state.portal.url = url;
+      state.portal.name = res.portal || '';
+      state.portal.categories = res.categories || [];
+      if (typed) {
+        await api.saveSettings({ portalUrl: url, portalToken: typed });
+        state.portal.tokenSet = true;
+        el.portalToken.value = '';
+      } else {
+        await api.saveSettings({ portalUrl: url });
+      }
+      el.portalToken.placeholder = tokenPlaceholder();
+      renderCategories(el.portalCategory.value);
+      setPortalResult(`Connected to ${res.portal || url}${state.portal.categories.length ? ` · ${state.portal.categories.length} categories` : ''}`, 'ok');
+      renderPortalControls();
+    } catch (err) {
+      setPortalResult(err.message, 'bad');
+    } finally {
+      el.btnPortalTest.disabled = false;
+    }
+    return undefined;
+  }
+
+  function wirePortal() {
+    el.optUpload.addEventListener('change', () => {
+      el.optPortalAuto.checked = el.optUpload.checked;
+      api.saveSettings({ portalAuto: el.optUpload.checked }).catch(() => {});
+    });
+    el.optPortalAuto.addEventListener('change', () => {
+      el.optUpload.checked = el.optPortalAuto.checked;
+      api.saveSettings({ portalAuto: el.optPortalAuto.checked }).catch(() => {});
+    });
+    el.btnUpload.addEventListener('click', uploadNow);
+    el.btnUploadOpen.addEventListener('click', () => {
+      if (state.upload.result && state.upload.result.url) api.openUrl(state.upload.result.url).catch((e) => showBanner(e.message));
+    });
+    el.portalUrl.addEventListener('change', () => {
+      state.portal.url = el.portalUrl.value.trim();
+      if (!state.portal.url) {
+        state.portal.name = '';
+        setPortalResult('', '');
+      }
+      api.saveSettings({ portalUrl: state.portal.url }).catch(() => {});
+      renderPortalControls();
+    });
+    el.portalToken.addEventListener('change', async () => {
+      const t = el.portalToken.value.trim();
+      if (!t) return;
+      try {
+        const s = await api.saveSettings({ portalToken: t });
+        state.portal.tokenSet = Boolean(s.portalTokenSet);
+        el.portalToken.value = '';
+        el.portalToken.placeholder = tokenPlaceholder();
+        setPortalResult('Token saved. Test the connection when you like.', '');
+      } catch (err) {
+        setPortalResult(err.message, 'bad');
+      }
+    });
+    el.btnPortalTest.addEventListener('click', testPortal);
+    el.portalCategory.addEventListener('change', () => api.saveSettings({ portalCategory: el.portalCategory.value }).catch(() => {}));
+    api.onUpload(onUploadEvent);
   }
 
   // ------------------------------------------------------------ wiring
@@ -2291,6 +2619,7 @@ input[type='text']:focus { outline: none; border-color: var(--x-accent); }
     });
     wireCapture();
     wirePreview();
+    wirePortal();
 
     api.onLog(appendLog);
     api.onProgress(({ statuses, summary }) => {
@@ -2303,8 +2632,10 @@ input[type='text']:focus { outline: none; border-color: var(--x-accent); }
     api.onDone((result) => {
       state.rendering = false;
       if (result && result.statuses) for (const s of result.statuses) state.statuses.set(s.jobId, s);
+      state.lastSummary = result ? result.summary : null;
       renderJobs();
       renderTotal(result ? result.summary : null);
+      renderPortalControls();
       updateButtons();
       if (result && result.error) showBanner(result.error);
       refreshStatus();
@@ -2323,6 +2654,13 @@ input[type='text']:focus { outline: none; border-color: var(--x-accent); }
     el.optStart.checked = settings.startRender !== false;
     state.keys = { cut: String(settings.keyCut || 'c').toLowerCase(), still: String(settings.keyStill || 's').toLowerCase() };
     renderKeys();
+    state.portal = { url: String(settings.portalUrl || '').trim(), tokenSet: Boolean(settings.portalTokenSet), name: settings.portalName || '', categories: Array.isArray(settings.portalCategories) ? settings.portalCategories : [] };
+    el.portalUrl.value = state.portal.url;
+    el.portalToken.placeholder = tokenPlaceholder();
+    el.optPortalAuto.checked = Boolean(settings.portalAuto);
+    el.optUpload.checked = Boolean(settings.portalAuto);
+    renderCategories(settings.portalCategory || '');
+    renderPortalControls();
     const history = await api.logHistory().catch(() => []);
     el.log.textContent = history.join('\n');
     renderMarks();

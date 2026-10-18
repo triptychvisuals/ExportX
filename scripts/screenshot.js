@@ -52,11 +52,20 @@ const mock = fs.readFileSync(path.join(REPO, 'ui', 'mock-api.js'), 'utf8');
   await page.waitForTimeout(1500);
   await page.screenshot({ path: path.join(OUT, 'exporting.png') });
 
+  // finish the fake render; the mock then uploads to the fake portal
+  await page.evaluate(() => window.__exportxMock.finishRender());
+  await page.waitForTimeout(1300);
+  await page.screenshot({ path: path.join(OUT, 'uploading.png') });
+  await page.waitForFunction(() => /on Triptych Studios/.test(document.getElementById('upload-text').textContent), null, { timeout: 15000 });
+  await page.waitForTimeout(300);
+  await page.screenshot({ path: path.join(OUT, 'uploaded.png') });
+
   await page.click('#tab-settings');
   await page.waitForTimeout(400);
   await page.evaluate(() => { const first = document.querySelector('.deliv-head'); if (first) first.click(); });
-  await page.waitForTimeout(300);
-  await page.setViewportSize({ width: 1280, height: 1500 });
+  await page.click('#btn-portal-test');
+  await page.waitForTimeout(900);
+  await page.setViewportSize({ width: 1280, height: 1900 });
   await page.waitForTimeout(300);
   await page.screenshot({ path: path.join(OUT, 'settings.png') });
   await page.setViewportSize({ width: 1280, height: 800 });
@@ -80,6 +89,9 @@ const mock = fs.readFileSync(path.join(REPO, 'ui', 'mock-api.js'), 'utf8');
     delivs: document.querySelectorAll('.deliv').length,
     summary: document.getElementById('export-summary').textContent,
     total: document.getElementById('total-text').textContent,
+    upload: document.getElementById('upload-text').textContent,
+    portal: document.getElementById('portal-result').textContent,
+    uploadedRows: document.querySelectorAll('.file.up-uploaded').length,
     scrollWidth: document.documentElement.scrollWidth,
   }));
   console.log('tally:', JSON.stringify(tally));

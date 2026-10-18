@@ -1,0 +1,233 @@
+openapi: 3.0.3
+info:
+  title: ExportX ingest API
+  version: "1"
+  description: |
+    The endpoints a portal implements to receive finished exports from ExportX,
+    the DaVinci Resolve batch-export plugin. Four calls, bearer-token auth,
+    raw-byte uploads. See README.md in this kit for the flow and the notes.
+servers:
+  - url: https://portal.example.com/api/exportx
+security:
+  - bearer: []
+paths:
+  /ping:
+    get:
+      summary: Health check and discovery (what "Test connection" calls)
+      operationId: ping
+      responses:
+        "200":
+          description: The portal is reachable and the token is valid
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PingResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /batches:
+    post:
+      summary: Create a batch from a manifest
+      operationId: createBatch
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Manifest"
+      responses:
+        "201":
+          description: Batch created, status "uploading"
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, batchId]
+                properties:
+                  ok: { type: boolean, enum: [true] }
+                  batchId: { type: string, description: URL-safe id used in the following calls }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /batches/{batchId}/files/{key}:
+    put:
+      summary: Upload one file of the batch (raw bytes)
+      operationId: uploadFile
+      parameters:
+        - $ref: "#/components/parameters/batchId"
+        - name: key
+          in: path
+          required: true
+          schema: { type: string }
+          description: The manifest entry's key
+        - name: Content-Length
+          in: header
+          required: true
+          schema: { type: integer, minimum: 1 }
+          description: Always sent. Reject the upload if the received byte count differs.
+        - name: X-ExportX-Filename
+          in: header
+          required: false
+          schema: { type: string }
+          description: URL-encoded original file name (same as the manifest entry's fileName)
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary
+      responses:
+        "201":
+          description: File stored
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok]
+                properties:
+                  ok: { type: boolean, enum: [true] }
+                  fileId: { type: string }
+                  bytes: { type: integer }
+                  url: { type: string, format: uri, description: Reserved for later plugin versions }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /batches/{batchId}/complete:
+    post:
+      summary: Mark the batch complete (or partial)
+      operationId: completeBatch
+      parameters:
+        - $ref: "#/components/parameters/batchId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CompleteRequest"
+      responses:
+        "200":
+          description: Batch finalised
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CompleteResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+components:
+  securitySchemes:
+    bearer:
+      type: http
+      scheme: bearer
+      description: Per-user (or per-workstation) token issued by the portal; pasted into ExportX › Settings
+  parameters:
+    batchId:
+      name: batchId
+      in: path
+      required: true
+      schema: { type: string }
+  responses:
+    BadRequest:
+      description: Invalid manifest, unknown key, or byte-count mismatch
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Unauthorized:
+      description: Missing or invalid bearer token
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    NotFound:
+      description: Unknown batch
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+  schemas:
+    Error:
+      type: object
+      required: [ok, error]
+      properties:
+        ok: { type: boolean, enum: [false] }
+        error:
+          type: string
+          description: Shown to the editor verbatim; write it for a person, with what to do next
+    Category:
+      type: object
+      required: [id, name]
+      properties:
+        id: { type: string, description: Stable id, returned in Manifest.category }
+        name: { type: string, description: Display name }
+    PingResponse:
+      type: object
+      required: [ok, portal, version]
+      properties:
+        ok: { type: boolean, enum: [true] }
+        portal: { type: string, example: Triptych Studios }
+        version: { type: string, enum: ["1"], description: Protocol version }
+        categories:
+          type: array
+          items: { $ref: "#/components/schemas/Category" }
+    Manifest:
+      type: object
+      required: [source, project, files]
+      properties:
+        source: { type: string, enum: [exportx] }
+        exportxVersion: { type: string, nullable: true, example: 0.2.0 }
+        project: { type: string, example: SpotA_Launch }
+        timeline: { type: string, nullable: true, example: Main Edit }
+        fps: { type: number, nullable: true, example: 23.976 }
+        exportedAt: { type: string, format: date-time }
+        namePattern: { type: string, nullable: true, example: "{yymmdd}_{project}_{label}" }
+        category: { type: string, nullable: true, description: Category id chosen as default in ExportX; a hint only }
+        files:
+          type: array
+          minItems: 1
+          items: { $ref: "#/components/schemas/FileEntry" }
+    FileEntry:
+      type: object
+      required: [key, fileName, kind, bytes]
+      properties:
+        key: { type: string, description: Unique within the batch; used in the PUT path }
+        fileName: { type: string, example: 261018_SpotA_Launch_Social_01.mp4 }
+        kind: { type: string, enum: [final, cut, still] }
+        label: { type: string, nullable: true, example: Social }
+        deliverableId: { type: string, nullable: true, example: cuts-social-1080 }
+        deliverableName: { type: string, nullable: true, example: Social cuts }
+        timeline: { type: string, nullable: true }
+        format: { type: string, nullable: true, example: mp4 }
+        codec: { type: string, nullable: true, example: H264 }
+        width: { type: integer, nullable: true }
+        height: { type: integer, nullable: true }
+        tcIn: { type: string, nullable: true, example: "01:00:04:00" }
+        tcOut: { type: string, nullable: true, example: "01:00:09:11" }
+        durationFrames: { type: integer, nullable: true }
+        markIndex: { type: integer, nullable: true }
+        bytes: { type: integer, minimum: 0 }
+        modifiedAt: { type: string, format: date-time }
+    CompleteRequest:
+      type: object
+      properties:
+        uploaded:
+          type: array
+          items: { type: string }
+        failed:
+          type: array
+          items:
+            type: object
+            required: [key, error]
+            properties:
+              key: { type: string }
+              error: { type: string }
+    CompleteResponse:
+      type: object
+      required: [ok, batchId]
+      properties:
+        ok: { type: boolean, enum: [true] }
+        batchId: { type: string }
+        status: { type: string, enum: [complete, partial] }
+        url: { type: string, format: uri, description: Shown as "open on the portal" in the plugin }

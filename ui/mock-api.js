@@ -74,7 +74,7 @@
     return list;
   }
 
-  const listeners = { log: [], progress: [], done: [], playhead: [], marks: [], preview: [] };
+  const listeners = { log: [], progress: [], done: [], playhead: [], marks: [], preview: [], upload: [] };
   const sub = (k) => (cb) => {
     listeners[k].push(cb);
     return () => {
@@ -106,7 +106,13 @@
     if (opts && opts.underscoreSpaces) out = out.replace(/\s+/g, '_').replace(/_{2,}/g, '_');
     return out;
   };
-  let settings = { targetDir: '/Volumes/Deliver/SpotA_Launch', nameTemplate: '{yymmdd}_{project}_{label}', underscoreSpaces: true, selectedProfiles: null, clearExisting: false, startRender: true, keyCut: 'c', keyStill: 's' };
+  const CATEGORIES = [
+    { id: 'commercial', name: 'Commercial' }, { id: 'music-video', name: 'Music video' }, { id: 'social', name: 'Social' }, { id: 'event', name: 'Event' }, { id: 'stills', name: 'Stills' },
+  ];
+  let settings = {
+    targetDir: '/Volumes/Deliver/SpotA_Launch', nameTemplate: '{yymmdd}_{project}_{label}', underscoreSpaces: true, selectedProfiles: null, clearExisting: false, startRender: true, keyCut: 'c', keyStill: 's',
+    portalUrl: 'https://portal.triptychstudios.com', portalTokenSet: true, portalTokenEncrypted: true, portalAuto: true, portalCategory: 'commercial', portalName: 'Triptych Studios', portalCategories: CATEGORIES,
+  };
 
   function plan(req) {
     const tls = req.timelines || ['Main Edit'];
@@ -185,8 +191,54 @@
     if (renderTimer) clearInterval(renderTimer);
     renderTimer = setInterval(tick, 350);
   }
+  function finishRender() {
+    if (!renderTimer) return;
+    for (const s of statuses.values()) if (s.status !== 'complete') { s.status = 'complete'; s.percent = 100; }
+    tick();
+  }
 
-  window.__exportxMock = { emit, get jobs() { return jobs; }, setPlaying: (v) => { playing = v; } };
+  // ---- fake portal upload
+  let uploadTimer = null;
+  let lastUpload = null;
+  let batchUpload = settings.portalAuto;
+  function startUpload(trigger) {
+    if (!settings.portalUrl) throw new Error('No portal URL is set. Add it under Settings › Portal.');
+    if (uploadTimer) throw new Error('An upload is already running');
+    const done = jobs.filter((j) => (statuses.get(j.jobId) || {}).status === 'complete');
+    if (!done.length) throw new Error('No finished files to upload yet.');
+    const files = done.map((j, i) => ({ key: j.jobId, jobId: j.jobId, fileName: `${j.fileName}.${j.kind === 'still' ? 'tif' : 'mp4'}`, bytes: j.kind === 'still' ? 24e6 : j.kind === 'cut' ? 180e6 : 2.4e9 }));
+    const totalBytes = files.reduce((n, f) => n + f.bytes, 0);
+    log(`Uploading ${files.length} file(s) (${(totalBytes / 1048576).toFixed(1)} MB) to ${settings.portalUrl}/api/exportx`);
+    emit('upload', { phase: 'start', trigger, portal: settings.portalUrl, files, totalBytes, missing: [] });
+    let i = 0;
+    let pct = 0;
+    const sent = () => files.slice(0, i).reduce((n, f) => n + f.bytes, 0) + (files[i] ? (files[i].bytes * pct) / 100 : 0);
+    uploadTimer = setInterval(() => {
+      if (i >= files.length) {
+        clearInterval(uploadTimer);
+        uploadTimer = null;
+        lastUpload = { batchId: '20261018-5f3a9c1e', url: `${settings.portalUrl}/batches/20261018-5f3a9c1e`, uploaded: files.map((f) => f.key), failed: [] };
+        log(`Upload complete: ${files.length} of ${files.length} uploaded → ${lastUpload.url}`);
+        emit('upload', { phase: 'done', ...lastUpload, missing: [] });
+        return;
+      }
+      pct = Math.min(100, pct + 20 + Math.round(Math.random() * 15));
+      const f = files[i];
+      const percentTotal = Math.round((sent() / totalBytes) * 100);
+      emit('upload', { phase: 'file', key: f.key, jobId: f.jobId, state: pct >= 100 ? 'uploaded' : 'uploading', percent: pct, error: null, percentTotal });
+      if (pct >= 100) { i += 1; pct = 0; }
+    }, 300);
+    return { files, totalBytes, missing: [] };
+  }
+  const origTick = tick;
+  tick = function tickWithUpload() { // eslint-disable-line no-func-assign
+    origTick();
+    if (!renderTimer && batchUpload && settings.portalUrl && !uploadTimer && !lastUpload) {
+      try { startUpload('auto'); } catch (err) { emit('upload', { phase: 'error', error: err.message }); }
+    }
+  };
+
+  window.__exportxMock = { emit, get jobs() { return jobs; }, setPlaying: (v) => { playing = v; }, finishRender };
 
   window.exportx = {
     status: async () => ({ connected: true, mock: true, product: 'DaVinci Resolve Studio', version: '20.1', project: 'SpotA_Launch', timeline: 'Main Edit', timelines, rendering: Boolean(renderTimer), userDir: '/Users/you/.exportx' }),
@@ -252,9 +304,12 @@
     seek: async (abs) => { playheadAbs = abs; return tc(abs); },
     plan: async (req) => plan(req),
     queue: async (req) => {
+      if (uploadTimer) throw new Error('Wait for the current upload to finish before exporting again.');
       const { items, notes } = plan(req);
       jobs = items.map((it, i) => ({ jobId: `job-${Date.now()}-${i}`, ...it, format: 'x', codec: 'y' }));
       statuses = new Map(jobs.map((j) => [j.jobId, { jobId: j.jobId, status: 'ready', percent: 0, error: null }]));
+      lastUpload = null;
+      if (typeof req.upload === 'boolean') { batchUpload = req.upload; settings.portalAuto = req.upload; } else batchUpload = settings.portalAuto;
       for (const j of jobs) log(`Queued "${j.profileName}" → ${j.targetDir}/${j.fileName}`);
       if (req.startRender && jobs.length) startRender();
       return { jobs, errors: [], notes, rendering: Boolean(req.startRender && jobs.length) };
@@ -271,8 +326,25 @@
     },
     jobStatus: async () => jobs.map((j) => statuses.get(j.jobId)),
     getSettings: async () => ({ ...settings }),
-    saveSettings: async (s) => { settings = { ...settings, ...(s || {}) }; return { ...settings }; },
+    saveSettings: async (s) => {
+      const patch = { ...(s || {}) };
+      if (Object.prototype.hasOwnProperty.call(patch, 'portalToken')) { patch.portalTokenSet = Boolean(patch.portalToken); delete patch.portalToken; }
+      settings = { ...settings, ...patch };
+      return { ...settings };
+    },
+    portalTest: async ({ portalUrl } = {}) => {
+      await new Promise((r) => setTimeout(r, 500));
+      const url = String(portalUrl || settings.portalUrl || '').trim();
+      if (!url) throw new Error('Enter the portal URL first.');
+      if (/bad|fail/.test(url)) throw new Error(`Portal GET /ping: getaddrinfo ENOTFOUND ${url.replace(/^https?:\/\//, '')}`);
+      settings.portalName = 'Triptych Studios';
+      settings.portalCategories = CATEGORIES;
+      log(`Portal OK: Triptych Studios (API v1), ${CATEGORIES.length} categories`);
+      return { ok: true, portal: 'Triptych Studios', version: '1', categories: CATEGORIES, url: `${url.replace(/\/+$/, '')}/api/exportx` };
+    },
+    portalUpload: async () => startUpload('manual'),
+    openUrl: async (url) => { log(`Would open ${url}`); return true; },
     logHistory: async () => [`${stamp()}Preview mode: this is a fake Resolve. Nothing is rendered.`, `${stamp()}Connected to DaVinci Resolve Studio 20.1 (preview)`],
-    onLog: sub('log'), onProgress: sub('progress'), onDone: sub('done'), onPlayhead: sub('playhead'), onMarks: sub('marks'), onPreview: sub('preview'),
+    onLog: sub('log'), onProgress: sub('progress'), onDone: sub('done'), onPlayhead: sub('playhead'), onMarks: sub('marks'), onPreview: sub('preview'), onUpload: sub('upload'),
   };
 })();

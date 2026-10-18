@@ -46,6 +46,10 @@ contextBridge.exposeInMainWorld('exportx', {
   render: (jobIds) => invoke('exportx:render', jobIds),
   stop: () => invoke('exportx:stop'),
   jobStatus: (jobIds) => invoke('exportx:job-status', jobIds),
+  // portal (Triptych Studios or any server implementing portal-kit/)
+  portalTest: (opts) => invoke('exportx:portal-test', opts),
+  portalUpload: (opts) => invoke('exportx:portal-upload', opts),
+  openUrl: (url) => invoke('exportx:open-url', url),
   // settings and log
   getSettings: () => invoke('exportx:get-settings'),
   saveSettings: (settings) => invoke('exportx:save-settings', settings),
@@ -57,4 +61,5 @@ contextBridge.exposeInMainWorld('exportx', {
   onPlayhead: (cb) => subscribe('exportx:playhead', cb),
   onMarks: (cb) => subscribe('exportx:marks', cb),
   onPreview: (cb) => subscribe('exportx:preview', cb),
+  onUpload: (cb) => subscribe('exportx:upload', cb),
 });

@@ -38,7 +38,7 @@ Resolve timeline markers = where cuts and stills live (customData exportx:cut / 
 
 | File | Responsibility |
 | --- | --- |
-| `main.js` | Electron main. Loads the native binding, owns the `ResolveBridge`/`BatchExporter`, exposes IPC handlers, polls the playhead (150 ms) and marks (2 s) and pushes them to the window, turns a press into a mark (from Resolve's playhead or from a frame the preview video reports), renders and caches the **preview proxy** (`~/.exportx/previews/`), saves and deletes user deliverable files for the Settings tab, persists settings in `~/.exportx/settings.json`, runs the render monitor. |
+| `main.js` | Electron main. Loads the native binding, owns the `ResolveBridge`/`BatchExporter`, exposes IPC handlers, polls the playhead (150 ms) and marks (2 s) and pushes them to the window, turns a press into a mark (from Resolve's playhead or from a frame the preview video reports), renders and caches the **preview proxy** (`~/.exportx/previews/`), saves and deletes user deliverable files for the Settings tab, persists settings in `~/.exportx/settings.json` (the portal token encrypted with `safeStorage`), runs the render monitor and the **portal upload**, and gives background feedback: `setProgressBar` on the dock/taskbar icon and a `Notification` when a render or upload finishes (only when the window is not in front; clicking it brings the panel back). |
 | `preload.js` | The only bridge between renderer and main. Exposes `window.exportx` with promise-returning calls and event subscriptions. Renderer has no Node access. |
 | `ui/renderer.js` | Vanilla DOM UI. **Export** tab, two panes: left = mark block (cut/still keys over the mark lists), export checklist + folder, pinned export bar (buttons, summary, progress); right = preview video with scrub bar and mark overlay, transport, playhead, per-file progress. **Settings** tab: file-name pattern with live example, editable deliverable cards (format/codec lists from Resolve), keys, advanced (timelines, switches, log). Stacks under 900 px. |
 | `ui/mock-api.js` | Browser-side fake of `window.exportx` (playing timeline, markers, self-progressing render queue) for `docs/preview.html` and screenshots. |
@@ -49,6 +49,8 @@ Resolve timeline markers = where cuts and stills live (customData exportx:cut / 
 | `src/timecode.js` | fps parsing, timecode ↔ absolute frames including 29.97/59.94 drop-frame. |
 | `src/profiles.js` | Loads and validates profile JSON from the bundled and user folders; `loadProfilesWithOrigin` (isUser/hasBundled), `saveUserProfile`, `deleteUserProfile` for the Settings tab. |
 | `src/naming.js` | File-name convention (`{yymmdd}_{project}_{label}` by default), tokens, sanitising, `defaultLabel`. |
+| `src/portal.js` | `PortalClient` (ping, createBatch, uploadFile with streamed bodies and progress, completeBatch, `uploadBatch`), `findOutputs()` (which files on disk a Resolve job produced, with or without frame numbers, newer than the queue time) and `buildManifest()` (jobs → portal manifest, no local paths). Plain `http`/`https`, no dependencies. |
+| `portal-kit/` | The contract for the portal side: README (protocol v1), `openapi.yaml`, `schema/manifest.schema.json`, examples, a dependency-free reference server (also the test fixture), a smoke script that proves an implementation, and the Claude Code prompt for the portal repository. |
 | `test/helpers/mock-resolve.js` | In-memory Resolve with the same method names (including timeline markers and a playhead), used by the tests and by `EXPORTX_MOCK=1`. |
 
 ## Frame bookkeeping
@@ -88,13 +90,23 @@ Resolve's scripting API cannot stream its viewer, so the panel asks Resolve to r
 3. For each timeline: read its marks if any included profile targets cuts/stills; `expandItems` produces one item per final export, per cut × cut profile, per still × still profile, with unique filenames.
 4. Switch to the timeline if needed; for each item: make the target folder, `applyProfile` (preset → format/codec → mode → settings incl. `MarkIn/MarkOut`), `AddRenderJob`. Errors are collected per item; "nothing marked" is a note.
 5. Switch back to the original timeline, persist the user's choices, return `{ jobs, errors, notes }`.
-6. If "start rendering" is on, `StartRendering([ids])` and begin a one-second poll of `GetRenderJobStatus`, pushing `exportx:progress` events until every job is terminal or Resolve stops rendering; then `exportx:done`.
+6. If "start rendering" is on, `StartRendering([ids])` and begin a one-second poll of `GetRenderJobStatus`, pushing `exportx:progress` events until every job is terminal or Resolve stops rendering; then `exportx:done`. The poll runs in the main process, so the window stays free: marking keeps working, and the dock/taskbar icon mirrors the percentage.
+7. On `exportx:done`: taskbar progress clears (or flashes red on failures), a notification goes out if the panel is not in front, and, if the batch was queued with the upload switch on, the upload starts.
+
+## Flow of an upload
+
+1. Main remembers, per batch, the queue time, project, timeline, fps and name pattern. After the render, it keeps only the jobs Resolve reports `complete`.
+2. `buildManifest()` looks in each job's folder for `fileName.ext` or `fileName[_.-]NNNN.ext` newer than the queue time (Resolve adds the extension; image sequences get frame numbers) and produces one manifest entry per file, plus a `missing` list that is logged.
+3. `PortalClient.uploadBatch()`: `GET /ping` is not repeated here (Test connection did that); `POST /batches` with the manifest, then one streamed `PUT /batches/{id}/files/{key}` per file (Content-Length set, `X-ExportX-Filename`), then `POST /batches/{id}/complete` with the uploaded and failed keys. Per-file failures do not stop the batch.
+4. Every step goes to the renderer as `exportx:upload` events (`start`, `file` with percent and overall percent, `done` with the portal's URL, `error`), to the taskbar as progress, and to the log. A notification announces the result.
+5. *Upload to portal* in the panel runs the same path by hand for the last batch; it creates a new batch on the portal (no resume).
 
 ## Roadmap ideas
 
 - Import existing coloured markers as cuts (e.g. "every blue marker with a duration").
 - Per-project profile sets stored alongside the project.
-- Post-render hooks: checksum, upload, Slack/webhook notification.
+- Post-render hooks beyond the portal: checksum, Slack/webhook notification.
+- Resumable uploads (tus or multipart) for very large masters over flaky links; protocol v2.
 - Burn-in and watermark variants via Data Burn-In presets.
 - Nudge a mark's in/out by a frame from the panel.
 - Render the preview automatically when a timeline opens, behind a setting.

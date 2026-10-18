@@ -10,10 +10,13 @@
  * src/batch.js does the batching. The renderer (ui/) talks to this process over
  * IPC only, via preload.js.
  *
- * Capture: while the timeline plays in Resolve, the panel's pad turns a hold
- * into a cut mark and a tap into a still mark. Marks are Resolve timeline
- * markers (see src/marks.js). This process polls the playhead a few times a
- * second and pushes it to the window.
+ * Capture: while the preview plays, holding the cut key marks a cut and the
+ * still key marks a still. Marks are Resolve timeline markers (see src/marks.js).
+ * This process polls the playhead a few times a second and pushes it to the window.
+ *
+ * Rendering and uploading run in the background: the window stays usable, the
+ * taskbar/dock icon shows progress, and a system notification pops when a batch
+ * (or its upload to the Triptych Studios portal, see src/portal.js) finishes.
  *
  * Set EXPORTX_MOCK=1 to run the UI against test/helpers/mock-resolve.js outside Resolve.
  */
@@ -21,13 +24,15 @@
 const path = require('path');
 const fs = require('fs');
 const { pathToFileURL } = require('url');
-const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, Notification, safeStorage } = require('electron');
 
 const { ResolveBridge } = require('./src/resolve');
 const { BatchExporter, DEFAULT_TEMPLATE, TARGETS } = require('./src/batch');
 const { framesToTc } = require('./src/timecode');
 const { sanitize } = require('./src/naming');
 const profilesLib = require('./src/profiles');
+const { PortalClient, buildManifest, normalizeBaseUrl } = require('./src/portal');
+const PKG = require('./package.json');
 
 const PLUGIN_ID = 'com.triptychvisuals.exportx';
 const MOCK = Boolean(process.env.EXPORTX_MOCK);
@@ -42,7 +47,15 @@ const DEFAULT_SETTINGS = {
   startRender: true,
   keyCut: 'c',
   keyStill: 's',
+  // Triptych Studios portal (optional). The token is stored encrypted when the OS keychain is available.
+  portalUrl: '',
+  portalToken: '',
+  portalAuto: false,
+  portalCategory: '',
+  portalName: '',
+  portalCategories: [],
 };
+const TOKEN_PREFIX = 'enc:';
 const PREVIEW_DIR = path.join(USER_DIR, 'previews');
 // The preview proxy: small, fast, same engine. Height follows the timeline's aspect ratio.
 const PREVIEW_PROFILE = {
@@ -72,6 +85,8 @@ const state = {
   monitor: null,
   logBuffer: [],
   press: null,
+  batch: null, // the last queued batch: { queuedAt, project, timeline, fps, namePattern, upload, statuses }
+  upload: { running: false },
   preview: { rendering: false, jobId: null, key: null, percent: 0 },
   playhead: { timer: null, inFlight: false, info: null, infoAt: 0, last: null, marksAt: 0, marksKey: null },
 };
@@ -103,10 +118,47 @@ function readSettings() {
 }
 
 function writeSettings(partial) {
-  const merged = { ...readSettings(), ...(partial || {}) };
+  const patch = { ...(partial || {}) };
+  if (Object.prototype.hasOwnProperty.call(patch, 'portalToken')) patch.portalToken = sealToken(patch.portalToken);
+  const merged = { ...readSettings(), ...patch };
   ensureDir(USER_DIR);
   fs.writeFileSync(SETTINGS_FILE, JSON.stringify(merged, null, 2));
   return merged;
+}
+
+// The portal token never goes to the renderer; it only sees whether one is saved.
+function canEncrypt() {
+  try {
+    return Boolean(safeStorage && safeStorage.isEncryptionAvailable());
+  } catch (_err) {
+    return false;
+  }
+}
+
+function sealToken(plain) {
+  const t = String(plain || '').trim();
+  if (!t || t.startsWith(TOKEN_PREFIX)) return t;
+  return canEncrypt() ? TOKEN_PREFIX + safeStorage.encryptString(t).toString('base64') : t;
+}
+
+function openToken(stored) {
+  const s = String(stored || '');
+  if (!s.startsWith(TOKEN_PREFIX)) return s;
+  try {
+    return safeStorage.decryptString(Buffer.from(s.slice(TOKEN_PREFIX.length), 'base64'));
+  } catch (_err) {
+    return '';
+  }
+}
+
+function publicSettings(settings) {
+  const { portalToken, ...rest } = settings;
+  return { ...rest, portalTokenSet: Boolean(portalToken), portalTokenEncrypted: String(portalToken || '').startsWith(TOKEN_PREFIX) };
+}
+
+function portalConfig() {
+  const s = readSettings();
+  return { url: String(s.portalUrl || '').trim(), token: openToken(s.portalToken), auto: Boolean(s.portalAuto), category: s.portalCategory || null };
 }
 
 function loadProfiles() {
@@ -275,6 +327,41 @@ async function pollPlayhead() {
   }
 }
 
+// ---------------------------------------------------------------- background feedback
+
+/** Progress on the dock/taskbar icon; -1 clears it. */
+function taskbarProgress(fraction, mode) {
+  if (!state.win || state.win.isDestroyed()) return;
+  try {
+    state.win.setProgressBar(fraction, mode ? { mode } : undefined);
+  } catch (_err) {
+    /* not supported on this platform */
+  }
+}
+
+function flashError() {
+  taskbarProgress(1, 'error');
+  setTimeout(() => taskbarProgress(-1), 5000);
+}
+
+/** A system notification when the window is not in front; clicking it brings the panel back. */
+function notify(title, body) {
+  if (state.win && !state.win.isDestroyed() && state.win.isFocused() && state.win.isVisible()) return;
+  try {
+    if (!Notification.isSupported()) return;
+    const n = new Notification({ title, body: String(body || '').slice(0, 200) });
+    n.on('click', () => {
+      if (!state.win || state.win.isDestroyed()) return;
+      if (state.win.isMinimized()) state.win.restore();
+      state.win.show();
+      state.win.focus();
+    });
+    n.show();
+  } catch (err) {
+    log(`Notification failed: ${err.message}`);
+  }
+}
+
 // ---------------------------------------------------------------- render monitor
 
 function stopMonitor() {
@@ -294,24 +381,138 @@ async function startRender(jobIds) {
     .waitForCompletion(jobIds, {
       intervalMs: 1000,
       signal: controller.signal,
-      onProgress: (statuses, summary) => send('exportx:progress', { statuses, summary }),
+      onProgress: (statuses, summary) => {
+        taskbarProgress(summary.percent / 100);
+        send('exportx:progress', { statuses, summary });
+      },
     })
     .then((result) => {
       if (state.monitor === controller) state.monitor = null;
       const { summary } = result;
-      log(
-        `Render finished: ${summary.complete} complete, ${summary.failed} failed, ${summary.cancelled} cancelled` +
-          (result.stopped && !summary.done ? ' (stopped early)' : ''),
-      );
+      const stopped = result.stopped && !summary.done;
+      log(`Render finished: ${summary.complete} complete, ${summary.failed} failed, ${summary.cancelled} cancelled${stopped ? ' (stopped early)' : ''}`);
+      if (state.batch) state.batch.statuses = result.statuses;
+      if (summary.failed) flashError();
+      else taskbarProgress(-1);
       send('exportx:done', result);
+      const batch = state.batch;
+      const willUpload = Boolean(batch && batch.upload && !stopped && summary.complete > 0);
+      notify(
+        summary.failed ? 'ExportX: render finished with errors' : 'ExportX: render finished',
+        `${summary.complete} of ${summary.total} files done${batch && batch.project ? ` · ${batch.project}` : ''}${willUpload ? ' · uploading to the portal' : ''}`,
+      );
+      if (willUpload) {
+        uploadBatch({ trigger: 'auto' }).catch((err) => {
+          log(`Upload not started: ${err.message}`);
+          send('exportx:upload', { phase: 'error', error: err.message });
+          notify('ExportX: upload not started', err.message);
+        });
+      }
     })
     .catch((err) => {
       if (state.monitor === controller) state.monitor = null;
       log(`Render monitor error: ${err.message}`);
+      flashError();
       send('exportx:done', { statuses: [], summary: null, error: err.message });
     });
   return true;
 }
+
+// ---------------------------------------------------------------- portal upload
+
+function portalClient(cfg, timeoutMs) {
+  return new PortalClient({ portalUrl: cfg.url, token: cfg.token, timeoutMs, userAgent: `ExportX/${PKG.version}` });
+}
+
+/**
+ * Push the finished files of the last batch to the portal. Resolves as soon as
+ * the upload has started (progress goes out as exportx:upload events).
+ */
+async function uploadBatch({ category, trigger = 'manual' } = {}) {
+  const cfg = portalConfig();
+  if (!cfg.url) throw new Error('No portal URL is set. Add it under Settings › Portal.');
+  if (!cfg.token) throw new Error('No portal token is saved. Paste it under Settings › Portal.');
+  if (state.upload.running) throw new Error('An upload is already running');
+  const batch = state.batch;
+  if (!batch || !state.jobs.length) throw new Error('Nothing to upload yet: export a batch first.');
+  const statuses = batch.statuses && batch.statuses.length ? batch.statuses : await requireExporter().status(state.jobs.map((j) => j.jobId));
+  const complete = new Set(statuses.filter((s) => s.status === 'complete').map((s) => s.jobId));
+  const jobs = state.jobs.filter((j) => complete.has(j.jobId));
+  if (!jobs.length) throw new Error('No finished files to upload yet.');
+  const bundle = buildManifest(
+    { project: batch.project, timeline: batch.timeline, fps: batch.fps, jobs, namePattern: batch.namePattern, exportxVersion: PKG.version, category: category || cfg.category },
+    { since: batch.queuedAt },
+  );
+  for (const m of bundle.missing) log(`Upload: no file named ${m.fileName}.* in ${m.targetDir}`);
+  if (!bundle.files.length) throw new Error(`Resolve reported the renders complete, but no files were found in ${jobs[0].targetDir}.`);
+
+  const files = bundle.files.map((f) => ({ key: f.key, jobId: f.jobId, fileName: f.fileName, bytes: f.bytes }));
+  const totalBytes = files.reduce((n, f) => n + f.bytes, 0);
+  const sent = new Map();
+  state.upload.running = true;
+  taskbarProgress(0);
+  log(`Uploading ${files.length} file(s) (${(totalBytes / 1048576).toFixed(1)} MB) to ${normalizeBaseUrl(cfg.url)}`);
+  send('exportx:upload', { phase: 'start', trigger, portal: cfg.url, files, totalBytes, missing: bundle.missing });
+
+  portalClient(cfg, 60000)
+    .uploadBatch(bundle, {
+      onFile: (ev) => {
+        const f = bundle.files.find((x) => x.key === ev.key);
+        const bytes = f ? f.bytes : 0;
+        sent.set(ev.key, ev.state === 'uploaded' ? bytes : ev.state === 'uploading' ? Math.round((ev.percent / 100) * bytes) : 0);
+        const done = [...sent.values()].reduce((a, b) => a + b, 0);
+        const percentTotal = totalBytes ? Math.round((done / totalBytes) * 100) : 0;
+        taskbarProgress(percentTotal / 100);
+        if (ev.state === 'failed') log(`Upload failed for ${f ? f.fileName : ev.key}: ${ev.error}`);
+        send('exportx:upload', { phase: 'file', key: ev.key, jobId: f ? f.jobId : null, state: ev.state, percent: ev.percent, error: ev.error || null, percentTotal });
+      },
+    })
+    .then((result) => {
+      state.upload.running = false;
+      const summary = `${result.uploaded.length} of ${files.length} uploaded`;
+      if (result.failed.length) flashError();
+      else taskbarProgress(-1);
+      log(`Upload ${result.failed.length ? 'finished with errors' : 'complete'}: ${summary}${result.url ? ` → ${result.url}` : ''}`);
+      send('exportx:upload', { phase: 'done', batchId: result.batchId, url: result.url, uploaded: result.uploaded, failed: result.failed, missing: bundle.missing });
+      notify(result.failed.length ? 'ExportX: upload finished with errors' : 'ExportX: uploaded to the portal', `${summary}${batch.project ? ` · ${batch.project}` : ''}`);
+    })
+    .catch((err) => {
+      state.upload.running = false;
+      flashError();
+      log(`Upload failed: ${err.message}`);
+      send('exportx:upload', { phase: 'error', error: err.message });
+      notify('ExportX: upload failed', err.message);
+    });
+  return { files, totalBytes, missing: bundle.missing };
+}
+
+function normalizeCategories(list) {
+  if (!Array.isArray(list)) return [];
+  return list
+    .map((c) => (typeof c === 'string' ? { id: c, name: c } : c && c.id ? { id: String(c.id), name: String(c.name || c.id) } : null))
+    .filter(Boolean);
+}
+
+handle('exportx:portal-test', async (opts) => {
+  const saved = portalConfig();
+  const url = String((opts && opts.portalUrl) || saved.url || '').trim();
+  const token = (opts && opts.token) || saved.token;
+  if (!url) throw new Error('Enter the portal URL first.');
+  const res = await portalClient({ url, token }, 10000).ping();
+  const categories = normalizeCategories(res.categories);
+  writeSettings({ portalName: res.portal || '', portalCategories: categories });
+  log(`Portal OK: ${res.portal || url} (API v${res.version || '?'}), ${categories.length} categories`);
+  return { ok: true, portal: res.portal || null, version: res.version || null, categories, url: normalizeBaseUrl(url) };
+});
+
+handle('exportx:portal-upload', async (opts) => uploadBatch({ category: opts && opts.category, trigger: 'manual' }));
+
+handle('exportx:open-url', async (url) => {
+  const u = String(url || '');
+  if (!/^https?:\/\//i.test(u)) throw new Error('Only http(s) links can be opened');
+  await shell.openExternal(u);
+  return true;
+});
 
 // ---------------------------------------------------------------- IPC: status, profiles, folders
 
@@ -636,14 +837,22 @@ handle('exportx:plan', async (req) => requireExporter().plan(toRequest(req)));
 handle('exportx:queue', async (req) => {
   const exporter = requireExporter();
   const request = toRequest(req);
+  if (state.upload.running) throw new Error('Wait for the current upload to finish before exporting again.');
+  const project = await state.bridge.projectName();
+  const info = await currentInfo(true);
+  const queuedAt = Date.now();
   const { jobs, errors, notes } = await exporter.queue(request);
   state.jobs = jobs;
+  const portal = portalConfig();
+  const upload = req && typeof req.upload === 'boolean' ? req.upload : portal.auto;
+  state.batch = { queuedAt, project, timeline: request.timelines ? request.timelines.join(', ') : info.name, fps: info.fps, namePattern: request.nameTemplate, upload: upload && Boolean(portal.url), statuses: [] };
   writeSettings({
     targetDir: request.targetDir,
     nameTemplate: request.nameTemplate,
     selectedProfiles: request.profiles.map((p) => p.id),
     clearExisting: request.clearExisting,
     startRender: Boolean(req && req.startRender),
+    ...(req && typeof req.upload === 'boolean' ? { portalAuto: req.upload } : {}),
   });
   let rendering = false;
   if (req && req.startRender && jobs.length) {
@@ -668,8 +877,8 @@ handle('exportx:job-status', async (jobIds) => {
   return requireExporter().status(ids);
 });
 
-handle('exportx:get-settings', async () => readSettings());
-handle('exportx:save-settings', async (settings) => writeSettings(settings));
+handle('exportx:get-settings', async () => publicSettings(readSettings()));
+handle('exportx:save-settings', async (settings) => publicSettings(writeSettings(settings)));
 handle('exportx:log-history', async () => [...state.logBuffer]);
 
 // ---------------------------------------------------------------- window

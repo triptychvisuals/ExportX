@@ -1,0 +1,12 @@
+{
+  "ok": true,
+  "portal": "Triptych Studios",
+  "version": "1",
+  "categories": [
+    { "id": "commercial", "name": "Commercial" },
+    { "id": "music-video", "name": "Music video" },
+    { "id": "social", "name": "Social" },
+    { "id": "event", "name": "Event" },
+    { "id": "stills", "name": "Stills" }
+  ]
+}

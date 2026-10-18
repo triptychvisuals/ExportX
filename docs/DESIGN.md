@@ -83,10 +83,12 @@ Type scale: 10.5 px tracked uppercase labels, 12–13 px UI text, 14 px delivera
 - **Mark block** at the top of the left pane: the two key buttons over the two mark lists, a 2 × 2. Each key button carries a keycap showing its key (`C`, `S` by default): `Hold for a cut` and `Still`. Holding the cut key (or the button) fills it cyan with `IN <tc> · <elapsed>` along the bottom; releasing flashes it. Pressing the still key flashes the still button pink. The colours are the marker colours, so the panel and Resolve's timeline agree. Disabled at 40 % when not connected.
 - **Settings › Keys** a short list of rows, each with a keycap; the cut and still keycaps are buttons that read `press a key…` while rebinding. Space, the arrows and ⌘↩ are shown but fixed.
 - **Mark row** 28 px monospace: coloured dot and number, `in → out` and duration (cuts) or the frame's timecode (stills), `×` to remove. Click moves the playhead. `clear` asks for a second click within four seconds instead of a dialog.
-- **Export bar** pinned to the bottom of the left pane: one 46 px accent pill (`Export everything · 6 files`), `Cuts only` / `Stills only` pills, a summary line (`3 final exports · 2 cuts · 1 still → folder`) and a 4 px bar with `17% · 1 of 6 done`. The per-file list with status dots lives under the playhead on the right, where the picture leaves room.
+- **Export bar** pinned to the bottom of the left pane: one 46 px accent pill (`Export everything · 6 files`), `Cuts only` / `Stills only` pills, a switch `Upload to Triptych Studios when done` (only when a portal URL is set), a summary line (`3 final exports · 2 cuts · 1 still → folder`), a 4 px bar with `17% · 1 of 6 done`, and while rendering one quiet line: `Runs in the background: keep marking, switch to Resolve or minimise this window. A notification pops when it's done.` The per-file list with status dots lives under the playhead on the right, where the picture leaves room.
+- **Upload card** above the file list on the right, only when a portal is set and a batch has finished: one sentence (`Uploading to Triptych Studios · 31% · 2 of 7 sent`, `All 7 files on Triptych Studios. Categorise and share them there.`), an `open on the portal` link, an `Upload` / `Upload again` pill, and a 4 px bar (accent, then green or red). File rows take a second state while it runs: `uploading 43%`, `on the portal`, `upload failed`.
 - **Tabs** a two-segment pill in the top bar, `Export` and `Settings`; the active segment is white on black like the timeline chips.
 - **Settings › File names** the pattern field, token chips, the spaces switch, and a live example line that uses the real project name.
 - **Settings › Deliverables** one collapsed card per deliverable (name, tag, monospace summary, `edited`/`custom` badge). Open, it is a two-column form: Name, Label, Applies to, Deliver preset, Format, Codec (both filled from Resolve's lists), Size, Quality, Folder, two switches, then `Save`, `Duplicate`, `Reset to default` or `Delete`, `Open JSON`. Destructive actions ask for a second click instead of a dialog.
+- **Settings › Triptych Studios portal** two fields (URL, access token as a password field that empties itself once saved and then reads `Saved · paste a new one to replace it`), `Test connection` with the result in green or red beside it, a category dropdown filled from the portal, the auto-upload switch, one explanatory paragraph.
 - **Settings › Advanced** timeline chips, two switches, the formats button, the log.
 
 ## 5. States
@@ -97,7 +99,9 @@ Type scale: 10.5 px tracked uppercase labels, 12–13 px UI text, 14 px delivera
 - **Nothing to export a mark with**: the hint under the pad turns amber and names the box to tick in step 1.
 - **Queued**: file rows appear with grey dots; the bar reads `6 files queued in Resolve`.
 - **Rendering**: `Stop rendering` replaces the primary button; the current file's dot is accent with a halo; the bar and line move once a second.
-- **Done**: dots green (or red), bar green or red, `All 6 done` or `Finished · 1 file failed` with the error under the file.
+- **Done**: dots green (or red), bar green or red, `All 6 done` or `Finished · 1 file failed` with the error under the file. A system notification says the same if the panel is not in front; the dock icon's progress clears.
+- **Uploading**: the upload card appears with the accent bar; the current file's row reads `uploading 43%` with the accent halo; the dock icon shows the upload's percentage.
+- **On the portal**: card and rows turn green, `open on the portal` appears, `Upload again` stays for a retry. Failures turn the card red with the portal's message, which is written for an editor.
 
 ## 6. What we deliberately did not copy
 

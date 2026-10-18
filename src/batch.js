@@ -77,7 +77,7 @@ function expandItems({ profiles = [], targets = TARGETS, timelineName, projectNa
       width: profile.resolution ? profile.resolution.width : '',
       height: profile.resolution ? profile.resolution.height : '',
     };
-    const common = { timeline: timelineName, profileId: profile.id, profileName: profile.name, profile, target, kind: KIND_FOR_TARGET[target], targetDir: dir };
+    const common = { timeline: timelineName, profileId: profile.id, profileName: profile.name, label: ctx.label, profile, target, kind: KIND_FOR_TARGET[target], targetDir: dir };
 
     if (target === 'timeline') {
       const fileName = renderName(template || DEFAULT_TEMPLATE, ctx, nameOptions) + (profile.fileSuffix || '');

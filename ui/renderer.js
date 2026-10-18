@@ -62,7 +62,22 @@
     progress: $('progress'),
     totalFill: $('total-fill'),
     totalText: $('total-text'),
+    bgHint: $('bg-hint'),
     jobs: $('jobs'),
+    // portal upload
+    uploadSwitch: $('upload-switch'),
+    optUpload: $('opt-upload'),
+    upload: $('upload'),
+    uploadText: $('upload-text'),
+    uploadFill: $('upload-fill'),
+    btnUpload: $('btn-upload'),
+    btnUploadOpen: $('btn-upload-open'),
+    portalUrl: $('portal-url'),
+    portalToken: $('portal-token'),
+    btnPortalTest: $('btn-portal-test'),
+    portalResult: $('portal-result'),
+    portalCategory: $('portal-category'),
+    optPortalAuto: $('opt-portal-auto'),
     // settings
     nameTemplate: $('name-template'),
     tokens: $('tokens'),
@@ -109,6 +124,9 @@
     openDelivs: new Set(),
     resolvePlayhead: null,
     preview: { status: null, source: 'preview', mediaTime: null, loadedFile: null, rvfc: 0, seekTimer: null },
+    lastSummary: null,
+    portal: { url: '', tokenSet: false, name: '', categories: [] },
+    upload: { running: false, files: new Map(), result: null, error: null, total: 0, percentTotal: 0 },
   };
 
   // ------------------------------------------------------------ utilities
@@ -208,6 +226,7 @@
       timelines: pickedTimelines(),
       clearExisting: el.optClear.checked,
       startRender: Boolean(startRender),
+      upload: portalConfigured() ? el.optUpload.checked : undefined,
     };
   }
 
@@ -225,6 +244,7 @@
     el.btnExportStills.disabled = !(ready && stills > 0 && countIncluded('stills') > 0);
     el.btnStop.classList.toggle('hidden', !state.rendering);
     el.btnGo.classList.toggle('hidden', state.rendering);
+    el.bgHint.classList.toggle('hidden', !state.rendering);
     el.keyCut.disabled = !isConnected();
     el.keyStill.disabled = !isConnected();
     const n = state.plan.items.length;
@@ -865,7 +885,7 @@
       if (pv.paused) followResolve();
     });
     pv.addEventListener('error', () => {
-      showBanner('The preview file could not be played. Re-render it from step 2.', 'info');
+      showBanner('The preview file could not be played. Use "re-render" under the picture.', 'info');
     });
     pv.addEventListener('click', togglePlay);
     el.pvOverlay.addEventListener('click', togglePlay);
@@ -976,13 +996,13 @@
     el.stillsCount.textContent = String(stills.length);
     el.cuts.innerHTML = '';
     el.stills.innerHTML = '';
-    if (!cuts.length) el.cuts.innerHTML = '<li class="none">None yet. Hold the pad while it plays.</li>';
+    if (!cuts.length) el.cuts.innerHTML = `<li class="none">None yet. Hold ${escapeHtml(keyName(state.keys.cut))} while it plays.</li>`;
     else for (const m of cuts) el.cuts.appendChild(markRow(m));
-    if (!stills.length) el.stills.innerHTML = '<li class="none">None yet. Tap the pad on a frame.</li>';
+    if (!stills.length) el.stills.innerHTML = `<li class="none">None yet. Press ${escapeHtml(keyName(state.keys.still))} on a frame.</li>`;
     else for (const m of stills) el.stills.appendChild(markRow(m));
     const warn = [];
-    if (cuts.length && !countIncluded('cuts')) warn.push('Tick a "per cut" deliverable in step 1 to export the cuts.');
-    if (stills.length && !countIncluded('stills')) warn.push('Tick a "per still" deliverable in step 1 to export the stills.');
+    if (cuts.length && !countIncluded('cuts')) warn.push('Tick a "per cut" deliverable under What to export to export the cuts.');
+    if (stills.length && !countIncluded('stills')) warn.push('Tick a "per still" deliverable under What to export to export the stills.');
     el.captureHint.className = `hint${warn.length ? ' warn' : ''}`;
     el.captureHint.textContent = warn.length
       ? warn.join(' ')
@@ -1204,7 +1224,7 @@
     const req = currentRequest(false);
     if (!isConnected() || !req.profileIds.length) {
       state.plan = { items: [], notes: [] };
-      el.exportSummary.textContent = req.profileIds.length ? '' : 'Tick at least one deliverable in step 1.';
+      el.exportSummary.textContent = req.profileIds.length ? '' : 'Tick at least one deliverable under What to export.';
       updateButtons();
       return;
     }
@@ -1224,7 +1244,7 @@
     if (finals) parts.push(plural(finals, 'final export'));
     if (cuts) parts.push(plural(cuts, 'cut'));
     if (stills) parts.push(plural(stills, 'still'));
-    const where = req.targetDir ? ` → ${slash(req.targetDir)}` : ' → choose a folder in step 1';
+    const where = req.targetDir ? ` → ${slash(req.targetDir)}` : ' → choose a folder under Save to';
     const noteText = notes.map((n) => n.message.replace(/ on ".*"$/, '')).filter((v, i, a) => a.indexOf(v) === i);
     el.exportSummary.textContent = (parts.length ? parts.join(' · ') + where : 'Nothing to export yet.') + (noteText.length ? ` · ${noteText.join(' · ')}` : '');
     updateButtons();
@@ -1234,15 +1254,21 @@
     el.jobs.innerHTML = '';
     for (const job of state.jobs) {
       const st = state.statuses.get(job.jobId) || { status: 'ready', percent: 0 };
+      const up = state.upload.files.get(job.jobId);
       const li = document.createElement('li');
-      li.className = `file ${st.status}`;
+      li.className = `file ${st.status}${up ? ` up-${up.state}` : ''}`;
       const where = job.mark ? `<small>${escapeHtml(job.mark.tcIn)}${job.kind === 'cut' ? ` → ${escapeHtml(job.mark.tcOut)}` : ''}</small>` : '';
-      const stateText = st.status === 'complete' ? 'done' : st.status === 'rendering' ? `${st.percent}%` : st.status === 'ready' ? 'waiting' : st.status;
+      let stateText = st.status === 'complete' ? 'done' : st.status === 'rendering' ? `${st.percent}%` : st.status === 'ready' ? 'waiting' : st.status;
+      if (up && up.state === 'uploading') stateText = `uploading ${up.percent}%`;
+      else if (up && up.state === 'uploaded') stateText = 'on the portal';
+      else if (up && up.state === 'failed') stateText = 'upload failed';
+      else if (up && up.state === 'queued') stateText = 'to upload';
+      const error = st.error || (up && up.error) || '';
       li.innerHTML =
         `<i class="st"></i>` +
         `<span class="fn" title="${escapeHtml(slash(job.targetDir))}/${escapeHtml(job.fileName)}">${escapeHtml(job.fileName)}${where}</span>` +
         `<span class="state">${escapeHtml(stateText)}</span>` +
-        (st.error ? `<span class="err">${escapeHtml(st.error)}</span>` : '');
+        (error ? `<span class="err">${escapeHtml(error)}</span>` : '');
       el.jobs.appendChild(li);
     }
   }
@@ -1271,8 +1297,8 @@
 
   async function queue(startRender, targets) {
     const req = currentRequest(startRender, targets);
-    if (!req.profileIds.length) return showBanner('Tick at least one deliverable in step 1.');
-    if (!req.targetDir) return showBanner('Choose where to save in step 1.');
+    if (!req.profileIds.length) return showBanner('Tick at least one deliverable under What to export.');
+    if (!req.targetDir) return showBanner('Choose where to save first (Save to).');
     showBanner(null);
     setBusy(true);
     try {
@@ -1280,8 +1306,11 @@
       state.jobs = jobs;
       state.statuses = new Map();
       state.rendering = rendering;
+      state.lastSummary = null;
+      resetUpload();
       renderJobs();
       renderTotal(null);
+      renderPortalControls();
       if (errors.length) {
         showBanner(`${errors.length} file(s) could not be queued: ${errors.map((e) => `${e.profileName} (${e.message})`).join('; ')}`);
       } else if (!jobs.length) {
@@ -1302,6 +1331,174 @@
     } catch (err) {
       showBanner(err.message);
     }
+  }
+
+  // ------------------------------------------------------------ portal: upload finished files
+
+  function portalConfigured() {
+    return Boolean(state.portal.url);
+  }
+
+  function portalName() {
+    return state.portal.name || 'the portal';
+  }
+
+  function resetUpload() {
+    state.upload = { running: false, files: new Map(), result: null, error: null, total: 0, percentTotal: 0 };
+  }
+
+  function uploadedCount() {
+    let n = 0;
+    for (const f of state.upload.files.values()) if (f.state === 'uploaded') n += 1;
+    return n;
+  }
+
+  function renderPortalControls() {
+    const on = portalConfigured();
+    el.uploadSwitch.classList.toggle('hidden', !on);
+    el.uploadSwitch.querySelector('span').textContent = `Upload to ${portalName()} when done`;
+    const up = state.upload;
+    const finished = Boolean(state.lastSummary && state.lastSummary.done && state.lastSummary.complete > 0);
+    const show = on && (up.running || up.result || up.error || finished);
+    el.upload.classList.toggle('hidden', !show);
+    if (!show) return;
+    const pct = up.running ? up.percentTotal : up.result ? 100 : 0;
+    el.uploadFill.style.width = `${pct}%`;
+    el.upload.classList.toggle('done', Boolean(up.result && !up.result.failed.length));
+    el.upload.classList.toggle('bad', Boolean(up.error || (up.result && up.result.failed.length)));
+    el.btnUpload.disabled = up.running || state.rendering;
+    el.btnUpload.textContent = up.running ? 'Uploading…' : up.result || up.error ? 'Upload again' : `Upload to ${portalName()}`;
+    el.btnUploadOpen.classList.toggle('hidden', !(up.result && up.result.url));
+    let text;
+    if (up.running) text = `Uploading to ${portalName()} · ${pct}% · ${uploadedCount()} of ${up.total} sent`;
+    else if (up.error) text = `Upload failed: ${up.error}`;
+    else if (up.result && up.result.failed.length) text = `${up.result.uploaded.length} of ${up.total} uploaded, ${plural(up.result.failed.length, 'file')} failed`;
+    else if (up.result) text = `All ${plural(up.total, 'file')} on ${portalName()}. Categorise and share them there.`;
+    else text = `Finished files are ready to send to ${portalName()}.`;
+    el.uploadText.textContent = text;
+  }
+
+  function onUploadEvent(ev) {
+    const up = state.upload;
+    if (ev.phase === 'start') {
+      resetUpload();
+      state.upload.running = true;
+      state.upload.total = ev.files.length;
+      state.upload.files = new Map(ev.files.map((f) => [f.jobId, { key: f.key, state: 'queued', percent: 0, error: null }]));
+      showBanner(null);
+    } else if (ev.phase === 'file') {
+      up.files.set(ev.jobId, { key: ev.key, state: ev.state, percent: ev.percent, error: ev.error || null });
+      up.percentTotal = ev.percentTotal || 0;
+    } else if (ev.phase === 'done') {
+      up.running = false;
+      up.result = { batchId: ev.batchId, url: ev.url || null, uploaded: ev.uploaded || [], failed: ev.failed || [] };
+    } else if (ev.phase === 'error') {
+      up.running = false;
+      up.error = ev.error;
+    }
+    renderJobs();
+    renderPortalControls();
+  }
+
+  async function uploadNow() {
+    el.btnUpload.disabled = true;
+    try {
+      await api.portalUpload({ category: el.portalCategory.value || undefined });
+    } catch (err) {
+      state.upload.error = err.message;
+      renderPortalControls();
+    }
+  }
+
+  function tokenPlaceholder() {
+    return state.portal.tokenSet ? 'Saved · paste a new one to replace it' : 'Paste the token from the portal';
+  }
+
+  function renderCategories(selected) {
+    el.portalCategory.innerHTML = '';
+    el.portalCategory.appendChild(option('', 'Choose on the portal', !selected));
+    let found = !selected;
+    for (const c of state.portal.categories) {
+      const hit = c.id === selected;
+      if (hit) found = true;
+      el.portalCategory.appendChild(option(c.id, c.name, hit));
+    }
+    if (!found && selected) el.portalCategory.appendChild(option(selected, selected, true));
+  }
+
+  function setPortalResult(text, kind) {
+    el.portalResult.textContent = text || '';
+    el.portalResult.className = `portal-result${kind ? ` ${kind}` : ''}`;
+  }
+
+  async function testPortal() {
+    const url = el.portalUrl.value.trim();
+    if (!url) return setPortalResult('Enter the portal URL first.', 'bad');
+    const typed = el.portalToken.value.trim();
+    setPortalResult('Connecting…', '');
+    el.btnPortalTest.disabled = true;
+    try {
+      const res = await api.portalTest({ portalUrl: url, token: typed || undefined });
+      state.portal.url = url;
+      state.portal.name = res.portal || '';
+      state.portal.categories = res.categories || [];
+      if (typed) {
+        await api.saveSettings({ portalUrl: url, portalToken: typed });
+        state.portal.tokenSet = true;
+        el.portalToken.value = '';
+      } else {
+        await api.saveSettings({ portalUrl: url });
+      }
+      el.portalToken.placeholder = tokenPlaceholder();
+      renderCategories(el.portalCategory.value);
+      setPortalResult(`Connected to ${res.portal || url}${state.portal.categories.length ? ` · ${state.portal.categories.length} categories` : ''}`, 'ok');
+      renderPortalControls();
+    } catch (err) {
+      setPortalResult(err.message, 'bad');
+    } finally {
+      el.btnPortalTest.disabled = false;
+    }
+    return undefined;
+  }
+
+  function wirePortal() {
+    el.optUpload.addEventListener('change', () => {
+      el.optPortalAuto.checked = el.optUpload.checked;
+      api.saveSettings({ portalAuto: el.optUpload.checked }).catch(() => {});
+    });
+    el.optPortalAuto.addEventListener('change', () => {
+      el.optUpload.checked = el.optPortalAuto.checked;
+      api.saveSettings({ portalAuto: el.optPortalAuto.checked }).catch(() => {});
+    });
+    el.btnUpload.addEventListener('click', uploadNow);
+    el.btnUploadOpen.addEventListener('click', () => {
+      if (state.upload.result && state.upload.result.url) api.openUrl(state.upload.result.url).catch((e) => showBanner(e.message));
+    });
+    el.portalUrl.addEventListener('change', () => {
+      state.portal.url = el.portalUrl.value.trim();
+      if (!state.portal.url) {
+        state.portal.name = '';
+        setPortalResult('', '');
+      }
+      api.saveSettings({ portalUrl: state.portal.url }).catch(() => {});
+      renderPortalControls();
+    });
+    el.portalToken.addEventListener('change', async () => {
+      const t = el.portalToken.value.trim();
+      if (!t) return;
+      try {
+        const s = await api.saveSettings({ portalToken: t });
+        state.portal.tokenSet = Boolean(s.portalTokenSet);
+        el.portalToken.value = '';
+        el.portalToken.placeholder = tokenPlaceholder();
+        setPortalResult('Token saved. Test the connection when you like.', '');
+      } catch (err) {
+        setPortalResult(err.message, 'bad');
+      }
+    });
+    el.btnPortalTest.addEventListener('click', testPortal);
+    el.portalCategory.addEventListener('change', () => api.saveSettings({ portalCategory: el.portalCategory.value }).catch(() => {}));
+    api.onUpload(onUploadEvent);
   }
 
   // ------------------------------------------------------------ wiring
@@ -1360,6 +1557,7 @@
     });
     wireCapture();
     wirePreview();
+    wirePortal();
 
     api.onLog(appendLog);
     api.onProgress(({ statuses, summary }) => {
@@ -1372,8 +1570,10 @@
     api.onDone((result) => {
       state.rendering = false;
       if (result && result.statuses) for (const s of result.statuses) state.statuses.set(s.jobId, s);
+      state.lastSummary = result ? result.summary : null;
       renderJobs();
       renderTotal(result ? result.summary : null);
+      renderPortalControls();
       updateButtons();
       if (result && result.error) showBanner(result.error);
       refreshStatus();
@@ -1392,6 +1592,13 @@
     el.optStart.checked = settings.startRender !== false;
     state.keys = { cut: String(settings.keyCut || 'c').toLowerCase(), still: String(settings.keyStill || 's').toLowerCase() };
     renderKeys();
+    state.portal = { url: String(settings.portalUrl || '').trim(), tokenSet: Boolean(settings.portalTokenSet), name: settings.portalName || '', categories: Array.isArray(settings.portalCategories) ? settings.portalCategories : [] };
+    el.portalUrl.value = state.portal.url;
+    el.portalToken.placeholder = tokenPlaceholder();
+    el.optPortalAuto.checked = Boolean(settings.portalAuto);
+    el.optUpload.checked = Boolean(settings.portalAuto);
+    renderCategories(settings.portalCategory || '');
+    renderPortalControls();
     const history = await api.logHistory().catch(() => []);
     el.log.textContent = history.join('\n');
     renderMarks();
