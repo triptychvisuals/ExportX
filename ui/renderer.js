@@ -1479,7 +1479,12 @@
       clearTimeout(clearArmed[kind]);
       clearArmed[kind] = null;
       btn.textContent = 'clear';
-      api.marksClear(kind).then(applyMarks).catch((e) => showBanner(e.message));
+      api.marksClear(kind)
+        .then((r) => {
+          applyMarks(r);
+          if (r && r.failed && r.failed.length) showBanner(`${r.failed.length === 1 ? 'One mark' : `${r.failed.length} marks`} would not go: ${r.failed[0].message}`);
+        })
+        .catch((e) => showBanner(e.message));
       return;
     }
     btn.textContent = 'click again to remove all';

@@ -59,6 +59,9 @@ class MockTimeline {
     this.height = o.height || 1080;
     // In and Out points (I and O in Resolve), relative frames like Resolve 19 reports them; null = none set
     this.inOut = o.inOut || null;
+    // How this "Resolve" deletes markers, to exercise the bridge's fallbacks:
+    // relative (default) | absolute (DeleteMarkerAtFrame wants absolute frames) | customData | color | never
+    this.deleteMode = o.deleteMode || 'relative';
     this.calls = [];
   }
   GetName() {
@@ -113,17 +116,34 @@ class MockTimeline {
     return true;
   }
   DeleteMarkerAtFrame(frameId) {
-    if (!this.markers[frameId]) return false;
-    delete this.markers[frameId];
+    this.calls.push(['DeleteMarkerAtFrame', frameId]);
+    if (['customData', 'color', 'never'].includes(this.deleteMode)) return false;
+    const key = this.deleteMode === 'absolute' ? Number(frameId) - this.startFrame : Number(frameId);
+    if (!this.markers[key]) return false;
+    delete this.markers[key];
     return true;
   }
+  UpdateMarkerCustomData(frameId, customData) {
+    this.calls.push(['UpdateMarkerCustomData', frameId, customData]);
+    if (['color', 'never'].includes(this.deleteMode)) return false;
+    if (!this.markers[frameId]) return false;
+    this.markers[frameId].customData = customData;
+    return true;
+  }
+  GetMarkerCustomData(frameId) {
+    return this.markers[frameId] ? this.markers[frameId].customData : '';
+  }
   DeleteMarkerByCustomData(customData) {
+    this.calls.push(['DeleteMarkerByCustomData', customData]);
+    if (this.deleteMode === 'never') return false;
     const hit = Object.entries(this.markers).find(([, v]) => v.customData === customData);
     if (!hit) return false;
     delete this.markers[hit[0]];
     return true;
   }
   DeleteMarkersByColor(color) {
+    this.calls.push(['DeleteMarkersByColor', color]);
+    if (this.deleteMode === 'never') return false;
     for (const [k, v] of Object.entries(this.markers)) if (v.color === color) delete this.markers[k];
     return true;
   }

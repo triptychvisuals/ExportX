@@ -3,7 +3,7 @@
   <Plugin>
     <Id>com.triptychvisuals.exportx</Id>
     <Name>ExportX</Name>
-    <Version>0.3.0</Version>
+    <Version>0.3.1</Version>
     <Description>Batch deliverable exporter: queue and render a set of deliverables from one panel.</Description>
     <FilePath>main.js</FilePath>
   </Plugin>

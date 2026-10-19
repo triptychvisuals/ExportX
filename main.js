@@ -691,13 +691,18 @@ handle('exportx:mark-still', async (at) => {
 handle('exportx:mark-delete', async (relIn) => {
   const result = await requireBridge().deleteMark(Number(relIn));
   broadcastMarks(result);
+  if (result.removed) {
+    log(`Removed ${result.removed.kind} ${result.removed.tcIn} via ${result.removed.how}`);
+    if (result.removed.lost && result.removed.lost.length) log(`Could not put back the marker(s) at ${result.removed.lost.join(', ')}; mark them again`);
+  }
   return result;
 });
 
 handle('exportx:marks-clear', async (kind) => {
   const result = await requireBridge().clearMarks(kind || null);
   broadcastMarks(result);
-  log(kind ? `Cleared all ${kind} marks` : 'Cleared all marks');
+  log(kind ? `Cleared ${result.removed} ${kind} mark(s)` : `Cleared ${result.removed} mark(s)`);
+  for (const f of result.failed || []) log(`Could not remove the ${f.kind} at ${f.tcIn}: ${f.message}`);
   return result;
 });
 

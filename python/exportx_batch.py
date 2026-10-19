@@ -637,6 +637,76 @@ def timeline_marks(tl) -> tuple[dict, list[dict]]:
     return info, marks_from_markers(tl.GetMarkers() or {}, info["startFrame"], info["fps"], info["drop"])
 
 
+def remove_marker(tl, mark: dict, info: dict, readd=lambda marker: True) -> str:
+    """Remove one of our markers and make sure it is gone. DeleteMarkerAtFrame answers False instead of raising, and Resolve
+    builds differ on which frame it wants, so every try is checked against GetMarkers() and the next way is tried: the relative
+    frame, the absolute frame, a unique customData tag plus DeleteMarkerByCustomData, and last DeleteMarkersByColor followed by
+    putting back the other markers of that colour that `readd` allows. Mirrors ResolveBridge._removeMarker(). Returns how it went."""
+    spec = MARK_KINDS[mark["kind"]]
+    rel = int(mark["relIn"])
+    tried: list[str] = []
+
+    def marker_at(frame):
+        for key, value in (tl.GetMarkers() or {}).items():
+            try:
+                if int(float(key)) == frame:
+                    return key, value
+            except (TypeError, ValueError):
+                continue
+        return None
+
+    def attempt(label, fn):
+        try:
+            ok = fn()
+        except Exception as err:  # noqa: BLE001
+            ok = f"threw {err}"
+        if marker_at(rel) is None:
+            return True
+        tried.append(f"{label} -> {ok}")
+        return False
+
+    if marker_at(rel) is None:
+        return "already gone"
+    if attempt(f"DeleteMarkerAtFrame({rel})", lambda: tl.DeleteMarkerAtFrame(rel)):
+        return f"DeleteMarkerAtFrame({rel})"
+    abs_in = int(mark["absIn"])
+    if abs_in != rel and attempt(f"DeleteMarkerAtFrame({abs_in})", lambda: tl.DeleteMarkerAtFrame(abs_in)):
+        return f"DeleteMarkerAtFrame({abs_in}), the absolute frame"
+    if hasattr(tl, "UpdateMarkerCustomData") and hasattr(tl, "DeleteMarkerByCustomData"):
+        tag = f"{spec['customData']}#remove-{rel}-{int(time.time())}"
+        try:
+            tagged = bool(tl.UpdateMarkerCustomData(rel, tag))
+        except Exception:  # noqa: BLE001
+            tagged = False
+        hit = marker_at(rel) if tagged else None
+        if hit and str((hit[1] or {}).get("customData")) == tag:
+            if attempt(f"DeleteMarkerByCustomData({tag})", lambda: tl.DeleteMarkerByCustomData(tag)):
+                return "DeleteMarkerByCustomData after tagging it"
+        else:
+            tried.append(f"UpdateMarkerCustomData({rel}) -> {'tag not stored' if tagged else False}")
+    if hasattr(tl, "DeleteMarkersByColor"):
+        before = tl.GetMarkers() or {}
+        others = [(k, v) for k, v in before.items() if (v or {}).get("color") == spec["color"] and int(float(k)) != rel and readd(v)]
+        try:
+            ok = tl.DeleteMarkersByColor(spec["color"])
+        except Exception as err:  # noqa: BLE001
+            ok = f"threw {err}"
+        if marker_at(rel) is None:
+            lost = []
+            for k, v in others:
+                try:
+                    back = tl.AddMarker(int(float(k)), v.get("color"), v.get("name") or "", v.get("note") or "", max(1, int(v.get("duration") or 1)), v.get("customData") or "")
+                except Exception:  # noqa: BLE001
+                    back = False
+                if not back:
+                    lost.append(frames_to_tc(info["startFrame"] + int(float(k)), info["fps"], info.get("drop", False)))
+            note = f"; could not put back {', '.join(lost)}, mark them again" if lost else ""
+            return f"DeleteMarkersByColor({spec['color']}) and re-added {len(others) - len(lost)} other marker(s){note}"
+        tried.append(f"DeleteMarkersByColor({spec['color']}) -> {ok}")
+    raise RuntimeError(f"Resolve would not remove the {mark['kind']} marker at {mark['tcIn']} (tried {'; '.join(tried)}). "
+                       f"Delete the {spec['color'].lower()} marker on the timeline in Resolve instead.")
+
+
 def add_mark(tl, kind: str, tc_in: str, tc_out: str | None = None) -> dict:
     info, marks = timeline_marks(tl)
     abs_in = tc_to_frames(tc_in, info["fps"])
@@ -1177,6 +1247,53 @@ def selftest() -> int:
         assert pfiles[0]["key"] == "j1" and pfiles[0]["bytes"] == 10 and pfiles[0]["width"] == 3840 and pfiles[0]["path"].endswith("261017_P_Final.mp4")
         reg = register_input(manifest, pfiles[0])
         assert reg["kind"] == "final" and reg["duration_seconds"] == 10.0 and reg["width"] == 3840 and reg["meta"]["resolveProject"] == "P" and "path" not in reg
+    class _FakeTl:  # a timeline whose DeleteMarkerAtFrame wants absolute frames, or refuses everything
+        def __init__(self, mode, markers):
+            self.mode, self.markers, self.calls = mode, dict(markers), []
+
+        def GetMarkers(self):  # noqa: N802
+            return {k: dict(v) for k, v in self.markers.items()}
+
+        def DeleteMarkerAtFrame(self, frame):  # noqa: N802
+            self.calls.append(("DeleteMarkerAtFrame", frame))
+            key = frame - 86400 if self.mode == "absolute" else None
+            if key in self.markers:
+                del self.markers[key]
+                return True
+            return False
+
+        def UpdateMarkerCustomData(self, frame, cd):  # noqa: N802
+            return False
+
+        def DeleteMarkerByCustomData(self, cd):  # noqa: N802
+            return False
+
+        def DeleteMarkersByColor(self, color):  # noqa: N802
+            self.calls.append(("DeleteMarkersByColor", color))
+            if self.mode == "color":
+                for k in [k for k, v in self.markers.items() if v["color"] == color]:
+                    del self.markers[k]
+                return True
+            return False
+
+        def AddMarker(self, frame, color, name, note, duration, cd):  # noqa: N802
+            self.markers[frame] = {"color": color, "name": name, "note": note, "duration": duration, "customData": cd}
+            return True
+
+    tl_info2 = {"startFrame": 86400, "fps": 24.0, "drop": False}
+    cut_mark = marks_from_markers({"24": {"color": "Cyan", "duration": 48, "customData": "exportx:cut"}}, 86400, 24)[0]
+    fake = _FakeTl("absolute", {24: {"color": "Cyan", "duration": 48, "customData": "exportx:cut", "name": "Cut 1", "note": ""}})
+    assert "absolute" in remove_marker(fake, cut_mark, tl_info2) and fake.calls == [("DeleteMarkerAtFrame", 24), ("DeleteMarkerAtFrame", 86424)]
+    fake = _FakeTl("color", {24: {"color": "Cyan", "duration": 48, "customData": "exportx:cut", "name": "Cut 1", "note": ""},
+                             50: {"color": "Cyan", "duration": 1, "customData": "", "name": "Client note", "note": "keep"}})
+    assert remove_marker(fake, cut_mark, tl_info2).startswith("DeleteMarkersByColor(Cyan) and re-added 1") and fake.markers == {50: {"color": "Cyan", "duration": 1, "customData": "", "name": "Client note", "note": "keep"}}
+    fake = _FakeTl("never", {24: {"color": "Cyan", "duration": 48, "customData": "exportx:cut", "name": "Cut 1", "note": ""}})
+    try:
+        remove_marker(fake, cut_mark, tl_info2)
+    except RuntimeError as err:
+        assert "01:00:01:00" in str(err) and "DeleteMarkerAtFrame(24)" in str(err) and "timeline in Resolve" in str(err), err
+    else:
+        raise AssertionError("a marker Resolve will not remove should raise")
     try:
         normalize_profile({"id": "x", "name": "X", "format": "mp4", "codec": "H264", "subfolder": "../up"})
     except ValueError:
@@ -1210,11 +1327,24 @@ def main(argv=None) -> int:
         if not tl:
             raise SystemExit("No timeline is open.")
         if args.clear_marks:
-            _, marks = timeline_marks(tl)
+            info, marks = timeline_marks(tl)
+            want = None if args.clear_marks == "all" else args.clear_marks
+
+            def keep(marker):  # what the colour fallback puts back: every marker that is not being cleared
+                return not str((marker or {}).get("customData") or "").startswith("exportx:" + (want or ""))
+
+            removed, failed = 0, []
             for m in marks:
-                if args.clear_marks == "all" or m["kind"] == args.clear_marks:
-                    tl.DeleteMarkerAtFrame(m["relIn"])
-            print(f"Cleared {args.clear_marks} marks.")
+                if want and m["kind"] != want:
+                    continue
+                try:
+                    print(f"Removed {m['kind']} {m['tcIn']} via {remove_marker(tl, m, info, keep)}")
+                    removed += 1
+                except RuntimeError as err:
+                    failed.append(str(err))
+            print(f"Cleared {removed} {args.clear_marks} mark(s)." + (f" {len(failed)} would not go:" if failed else ""))
+            for f in failed:
+                print("  " + f)
         for tc_in, tc_out in args.mark_cut:
             m = add_mark(tl, "cut", tc_in, tc_out)
             print(f"Marked cut {m['index']}: {m['tcIn']} -> {m['tcOut']}")

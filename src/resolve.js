@@ -18,7 +18,14 @@
  */
 
 const { parseFps, tcToFrames, framesToTc, isDropFrameTimecode } = require('./timecode');
-const { KINDS, marksFromMarkers } = require('./marks');
+const { KINDS, marksFromMarkers, kindFromMarker } = require('./marks');
+
+/** The GetMarkers() entry at this relative frame, however the key is spelled ("96", 96 or "96.0"). */
+function markerEntry(markers, relIn) {
+  const want = Number(relIn);
+  for (const [key, value] of Object.entries(markers || {})) if (Number(key) === want) return { key, value };
+  return null;
+}
 
 class ResolveError extends Error {
   constructor(message, details) {
@@ -361,19 +368,111 @@ class ResolveBridge {
     return { ...after, added };
   }
 
-  async deleteMark(relIn) {
-    const tl = await this.currentTimeline();
-    await tl.DeleteMarkerAtFrame(Number(relIn));
-    return this.marks(tl);
+  /**
+   * Remove one of our markers and make sure it is gone. DeleteMarkerAtFrame answers
+   * false (or nothing) instead of throwing, and Resolve builds differ on which frame
+   * it wants, so every attempt is checked against GetMarkers() and the next way is
+   * tried: the relative frame GetMarkers reports, the absolute frame, a unique
+   * customData tag plus DeleteMarkerByCustomData, and last DeleteMarkersByColor
+   * followed by putting back every other marker of that colour that `readd` allows.
+   * @returns {{ how: string, readded: number, lost: string[] }}  lost: timecodes of markers that could not be put back
+   */
+  async _removeMarker(tl, mark, { info, readd = () => true } = {}) {
+    const def = KINDS[mark.kind];
+    const tried = [];
+    const stillThere = async () => Boolean(markerEntry((await tl.GetMarkers()) || {}, mark.relIn));
+    const attempt = async (label, fn) => {
+      let ok;
+      try {
+        ok = await fn();
+      } catch (err) {
+        ok = `threw ${err && err.message ? err.message : err}`;
+      }
+      if (!(await stillThere())) return true;
+      tried.push(`${label} → ${ok === undefined ? 'nothing' : String(ok)}`);
+      return false;
+    };
+    if (!(await stillThere())) return { how: 'already gone', readded: 0, lost: [] };
+    if (typeof tl.DeleteMarkerAtFrame === 'function') {
+      if (await attempt(`DeleteMarkerAtFrame(${mark.relIn})`, () => tl.DeleteMarkerAtFrame(Number(mark.relIn)))) {
+        return { how: `DeleteMarkerAtFrame(${mark.relIn})`, readded: 0, lost: [] };
+      }
+      if (mark.absIn !== mark.relIn && (await attempt(`DeleteMarkerAtFrame(${mark.absIn})`, () => tl.DeleteMarkerAtFrame(Number(mark.absIn))))) {
+        return { how: `DeleteMarkerAtFrame(${mark.absIn}), the absolute frame`, readded: 0, lost: [] };
+      }
+    }
+    if (typeof tl.UpdateMarkerCustomData === 'function' && typeof tl.DeleteMarkerByCustomData === 'function') {
+      const tag = `${def.customData}#remove-${mark.relIn}-${Date.now().toString(36)}`;
+      let tagged = false;
+      try {
+        tagged = Boolean(await tl.UpdateMarkerCustomData(Number(mark.relIn), tag));
+      } catch (_err) {
+        tagged = false;
+      }
+      const entry = tagged ? markerEntry((await tl.GetMarkers()) || {}, mark.relIn) : null;
+      if (entry && entry.value && String(entry.value.customData) === tag) {
+        if (await attempt(`DeleteMarkerByCustomData(${tag})`, () => tl.DeleteMarkerByCustomData(tag))) {
+          return { how: 'DeleteMarkerByCustomData after tagging it', readded: 0, lost: [] };
+        }
+      } else tried.push(`UpdateMarkerCustomData(${mark.relIn}) → ${tagged ? 'tag not stored' : 'false'}`);
+    }
+    if (typeof tl.DeleteMarkersByColor === 'function') {
+      const before = (await tl.GetMarkers()) || {};
+      const others = Object.entries(before).filter(([k, v]) => v && v.color === def.color && Number(k) !== Number(mark.relIn) && readd(v, Number(k)));
+      let ok;
+      try {
+        ok = await tl.DeleteMarkersByColor(def.color);
+      } catch (err) {
+        ok = `threw ${err && err.message ? err.message : err}`;
+      }
+      if (!(await stillThere())) {
+        const lost = [];
+        for (const [k, v] of others) {
+          let back = false;
+          try {
+            back = await tl.AddMarker(Number(k), v.color, v.name || '', v.note || '', Math.max(1, Number(v.duration) || 1), v.customData || '');
+          } catch (_err) {
+            back = false;
+          }
+          if (!back) lost.push(info ? framesToTc(info.startFrame + Number(k), info.fps, info.dropFrame) : String(k));
+        }
+        return { how: `DeleteMarkersByColor(${def.color}) and re-added ${others.length - lost.length} other ${def.color.toLowerCase()} marker(s)`, readded: others.length - lost.length, lost };
+      }
+      tried.push(`DeleteMarkersByColor(${def.color}) → ${ok === undefined ? 'nothing' : String(ok)}`);
+    }
+    throw new ResolveError(
+      `Resolve would not remove the ${mark.kind} marker at ${mark.tcIn} (tried ${tried.join('; ')}). Delete the ${def.color.toLowerCase()} marker on the timeline in Resolve instead; the list here follows it.`,
+    );
   }
 
+  /** Remove the mark at this relative frame. Returns the marks afterwards plus `removed` (null when it was already gone). */
+  async deleteMark(relIn) {
+    const tl = await this.currentTimeline();
+    const current = await this.marks(tl);
+    const mark = current.marks.find((m) => m.relIn === Number(relIn));
+    if (!mark) return { ...current, removed: null };
+    const removed = await this._removeMarker(tl, mark, { info: current.info });
+    return { ...(await this.marks(tl)), removed: { kind: mark.kind, tcIn: mark.tcIn, ...removed } };
+  }
+
+  /** Remove every mark of a kind (or all). Never throws for one stubborn marker: `failed` lists them. */
   async clearMarks(kind) {
     const tl = await this.currentTimeline();
-    const { marks } = await this.marks(tl);
+    const { marks, info } = await this.marks(tl);
+    // The colour fallback puts back the other markers of that colour: everything that is not being cleared.
+    const readd = (marker) => (kind ? kindFromMarker(marker) !== kind : !kindFromMarker(marker));
+    const failed = [];
+    let removed = 0;
     for (const m of marks) {
-      if (!kind || m.kind === kind) await tl.DeleteMarkerAtFrame(m.relIn);
+      if (kind && m.kind !== kind) continue;
+      try {
+        await this._removeMarker(tl, m, { info, readd });
+        removed += 1;
+      } catch (err) {
+        failed.push({ kind: m.kind, tcIn: m.tcIn, message: err.message });
+      }
     }
-    return this.marks(tl);
+    return { ...(await this.marks(tl)), removed, failed };
   }
 
   // ------------------------------------------------------------ render settings

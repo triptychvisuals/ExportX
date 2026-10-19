@@ -75,3 +75,64 @@ test('seek moves the Resolve playhead', async () => {
   assert.equal(tl.playheadAbs, 86400 + 24 * 5);
   assert.deepEqual(tl.calls[0], ['SetCurrentTimecode', '01:00:05:00']);
 });
+
+function setupWith(deleteMode, markers) {
+  const resolve = createMockResolve({ timelines: [{ name: 'Main Edit', fps: 24, startFrame: 86400, deleteMode, markers }] });
+  return { bridge: new ResolveBridge(resolve), tl: resolve.project.timelines[0] };
+}
+
+test('deleting a mark is verified against GetMarkers and falls back to the absolute frame', async () => {
+  const { bridge, tl } = setupWith('absolute');
+  await bridge.addMark({ kind: 'cut', absIn: 86410, absOut: 86430 });
+  const r = await bridge.deleteMark(10);
+  assert.equal(r.marks.length, 0);
+  assert.match(r.removed.how, /absolute/);
+  assert.deepEqual(tl.calls.filter((c) => c[0] === 'DeleteMarkerAtFrame').map((c) => c[1]), [10, 86410]);
+});
+
+test('deleting a mark falls back to a unique customData tag without touching the other marks', async () => {
+  const { bridge, tl } = setupWith('customData');
+  await bridge.addMark({ kind: 'still', absIn: 86500, absOut: 86500 });
+  await bridge.addMark({ kind: 'still', absIn: 86600, absOut: 86600 });
+  const r = await bridge.deleteMark(100);
+  assert.deepEqual(r.marks.map((m) => m.relIn), [200]);
+  assert.match(r.removed.how, /DeleteMarkerByCustomData/);
+  assert.equal(tl.markers[200].customData, 'exportx:still');
+});
+
+test('as a last resort a mark is deleted by colour and the other markers of that colour are put back', async () => {
+  const { bridge, tl } = setupWith('color', { 50: { color: 'Cyan', name: 'Client note', note: 'keep me', duration: 5 } });
+  await bridge.addMark({ kind: 'cut', absIn: 86410, absOut: 86430 });
+  await bridge.addMark({ kind: 'cut', absIn: 86600, absOut: 86700 });
+  const r = await bridge.deleteMark(10);
+  assert.deepEqual(r.marks.map((m) => `${m.kind}@${m.relIn}`), ['cut@200']);
+  assert.match(r.removed.how, /DeleteMarkersByColor/);
+  assert.equal(r.removed.readded, 2);
+  assert.deepEqual(r.removed.lost, []);
+  assert.deepEqual([tl.markers[50].name, tl.markers[50].note, tl.markers[50].duration, tl.markers[50].customData], ['Client note', 'keep me', 5, '']);
+  assert.deepEqual([tl.markers[200].customData, tl.markers[200].duration, tl.markers[200].name], ['exportx:cut', 101, 'Cut 2']);
+  // clearing a kind sweeps the colour once and keeps the marker that is not ours
+  await bridge.addMark({ kind: 'cut', absIn: 86900, absOut: 86910 });
+  const c = await bridge.clearMarks('cut');
+  assert.equal(c.failed.length, 0);
+  assert.equal(c.removed, 2);
+  assert.equal(c.marks.length, 0);
+  assert.ok(tl.markers[50]);
+  assert.equal(tl.calls.filter((x) => x[0] === 'DeleteMarkersByColor').length, 2);
+});
+
+test('when Resolve refuses every way the error names the marker and says what to do, and clear reports it', async () => {
+  const { bridge } = setupWith('never');
+  await bridge.addMark({ kind: 'cut', absIn: 86410, absOut: 86430 });
+  await assert.rejects(bridge.deleteMark(10), /01:00:00:10.*DeleteMarkerAtFrame\(10\).*timeline in Resolve/s);
+  const c = await bridge.clearMarks('cut');
+  assert.equal(c.failed.length, 1);
+  assert.equal(c.removed, 0);
+  assert.equal(c.marks.length, 1);
+});
+
+test('deleting a mark that is already gone is not an error', async () => {
+  const { bridge } = setup();
+  const r = await bridge.deleteMark(999);
+  assert.equal(r.removed, null);
+});
