@@ -11,6 +11,16 @@ Blackmagic only exposes the Workflow Integration plugin host and external script
 
 ## 1. Workflow Integration plugin
 
+### The short way: download and double-click
+
+1. Download the plugin: **<https://github.com/triptychvisuals/ExportX/archive/refs/heads/main.zip>** (the latest), or a numbered version from <https://github.com/triptychvisuals/ExportX/tags>.
+2. Unzip it. You get a folder called `ExportX-main` (or `ExportX-0.2.0`).
+3. **Mac:** double-click `Install ExportX.command` inside it. If macOS says it "cannot be opened because it is from an unidentified developer", right-click the file, choose **Open**, then **Open** again. It asks for your Mac password once (Resolve's plugin folder belongs to the system).
+   **Windows:** double-click `Install ExportX.cmd` and allow the administrator prompt.
+4. Restart DaVinci Resolve Studio and open **Workspace › Workflow Integrations › ExportX**.
+
+The installer copies `WorkflowIntegration.node` out of your own Resolve install, so the download works for any Resolve Studio 18 or newer on Mac, Windows or Linux. If you would rather type it: `bash ~/Downloads/ExportX-main/scripts/install.sh`.
+
 ### Paths you will need
 
 | OS | Plugins folder | Developer folder |

@@ -69,7 +69,11 @@ Yes. ExportX encodes nothing itself. It sets the Deliver page's render settings 
 - **Python edition** (`python/exportx_batch.py`) using the same profiles and markers, for the Scripts menu in the free edition or headless use from a terminal in Studio.
 - **No runtime dependencies**, unit-tested against an in-memory Resolve mock, CI on every push.
 
-## Quick start
+## Install
+
+**Download:** <https://github.com/triptychvisuals/ExportX/archive/refs/heads/main.zip> (or a numbered version under [tags](https://github.com/triptychvisuals/ExportX/tags)). Unzip it, then double-click **`Install ExportX.command`** (Mac; right-click › Open the first time) or **`Install ExportX.cmd`** (Windows). It copies the plugin into Resolve's plugin folder and takes `WorkflowIntegration.node` from your own Resolve install, so one download fits every machine. Restart Resolve Studio and open **Workspace › Workflow Integrations › ExportX**.
+
+From a terminal instead:
 
 ```bash
 git clone https://github.com/triptychvisuals/ExportX.git
@@ -79,7 +83,7 @@ bash scripts/install.sh                 # macOS / Linux (sudo prompt)
 # powershell -ExecutionPolicy Bypass -File scripts\install.ps1
 ```
 
-Restart Resolve Studio and open **Workspace › Workflow Integrations › ExportX**. Full instructions, paths and troubleshooting: [docs/INSTALL.md](docs/INSTALL.md).
+Full instructions, paths and troubleshooting: [docs/INSTALL.md](docs/INSTALL.md). To send batches to the portal, make a key under **Settings › ExportX** on the portal and paste it into ExportX's Settings tab.
 
 Python / CLI:
 
