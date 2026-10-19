@@ -34,10 +34,9 @@ A file may contain a single profile object, an array of them, or `{ "profiles": 
   "renderMode": "single",           // "single" (one file) or "individual" (one file per clip)
   "resolution": { "width": 1920, "height": 1080 },   // optional. omit to render at timeline resolution
   "frameRate": null,                // optional. e.g. 23.976 / 25 / 29.97
-  "settings": {                     // optional. passed straight to Project.SetRenderSettings()
-    "VideoQuality": "High",
+  "settings": {                     // optional. passed to Project.SetRenderSettings(), one key at a time (see below)
+    "VideoQuality": 12000,          // kb/s for H.264/H.265; a "Least".."Best" level only for codecs that have levels
     "AudioCodec": "aac",
-    "AudioBitDepth": 16,
     "AudioSampleRate": 48000,
     "NetworkOptimization": true
   },
