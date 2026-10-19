@@ -35,20 +35,27 @@
           <div class="block mark-block">
             <div class="block-head">
               <h2 class="label">Mark while it plays</h2>
-              <span class="hint-inline" id="capture-tl">No timeline</span>
+              <div class="tl-pick-wrap">
+                <select id="timeline-pick" class="tl-pick" aria-label="The timeline to mark and export"><option value="">No timeline</option></select>
+                <span class="hint-inline" id="capture-fps"></span>
+              </div>
             </div>
+            <!-- The keys on the keyboard, mirrored: they light while the real key is down. Not buttons. -->
             <div class="keys">
-              <button class="keybtn cut" id="key-cut" type="button" aria-label="Hold to mark a cut">
-                <kbd id="kbd-cut">C</kbd>
-                <span class="key-main">Hold for a cut</span>
-                <span class="key-sub">hold while it plays, release to finish</span>
-                <span class="key-live" id="key-cut-live"></span>
-              </button>
-              <button class="keybtn still" id="key-still" type="button" aria-label="Mark a still">
-                <kbd id="kbd-still">S</kbd>
-                <span class="key-main">Still</span>
-                <span class="key-sub">press once on the frame you want</span>
-              </button>
+              <div class="keycap-row cut" id="key-cut" role="status" aria-live="polite">
+                <kbd class="keycap" id="kbd-cut">C</kbd>
+                <div class="key-text">
+                  <span class="key-main">Hold for a cut</span>
+                  <span class="key-sub" id="key-cut-live">hold while it plays, release to finish</span>
+                </div>
+              </div>
+              <div class="keycap-row still" id="key-still" role="status">
+                <kbd class="keycap" id="kbd-still">S</kbd>
+                <div class="key-text">
+                  <span class="key-main">Still</span>
+                  <span class="key-sub">press once on the frame you want</span>
+                </div>
+              </div>
             </div>
             <div class="marks">
               <div class="mark-col">
@@ -59,6 +66,10 @@
                 <div class="marks-head"><span class="label">Stills</span><span class="count" id="stills-count">0</span><button class="link" id="btn-clear-stills">clear</button></div>
                 <ul class="mark-list" id="stills"></ul>
               </div>
+            </div>
+            <div class="range-row" id="range-row">
+              <span class="range-text" id="range-text">Whole timeline</span>
+              <label class="switch mini hidden" id="range-switch"><input type="checkbox" id="opt-inout" checked /><i></i><span>only In to Out</span></label>
             </div>
             <p class="hint" id="capture-hint">Keys work while this window is focused. Marks are saved as timeline markers.</p>
           </div>
@@ -213,7 +224,7 @@
       <section class="step" aria-labelledby="h-advanced">
         <h2 id="h-advanced">Advanced</h2>
         <div class="field">
-          <span class="field-label">Timelines to export</span>
+          <span class="field-label">Timelines in one batch</span>
           <div class="chips" id="timelines"></div>
           <span class="hint" id="nav-hint"></span>
         </div>
@@ -229,6 +240,7 @@
       </section>
     </main>
 
+    <script src="../src/estimate.js"></script>
     <script src="renderer.js"></script>
   </body>
 </html>

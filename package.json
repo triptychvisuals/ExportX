@@ -1,6 +1,6 @@
 {
   "name": "exportx",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "ExportX: batch deliverable exporter plugin for DaVinci Resolve (Workflow Integration plugin + Python CLI)",
   "main": "main.js",
   "private": true,

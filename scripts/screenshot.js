@@ -18,6 +18,7 @@ fs.mkdirSync(OUT, { recursive: true });
 
 const profiles = JSON.parse(fs.readFileSync(path.join(REPO, 'profiles', 'default.json'), 'utf8')).profiles;
 const mock = fs.readFileSync(path.join(REPO, 'ui', 'mock-api.js'), 'utf8');
+const estimate = fs.readFileSync(path.join(REPO, 'src', 'estimate.js'), 'utf8');
 
 (async () => {
   const browser = await pw.chromium.launch();
@@ -25,7 +26,7 @@ const mock = fs.readFileSync(path.join(REPO, 'ui', 'mock-api.js'), 'utf8');
   page.on('pageerror', (e) => console.log('PAGE ERROR', e.message));
   page.on('console', (m) => { if (m.type() === 'error') console.log('CONSOLE', m.text()); });
   const videoUrl = 'file://' + path.join(REPO, 'ui', 'mock-preview.webm');
-  await page.addInitScript(`window.__EXPORTX_PROFILES__ = ${JSON.stringify(profiles)}; window.__EXPORTX_PREVIEW_VIDEO__ = ${JSON.stringify(videoUrl)};\n${mock}`);
+  await page.addInitScript(`window.__EXPORTX_PROFILES__ = ${JSON.stringify(profiles)}; window.__EXPORTX_PREVIEW_VIDEO__ = ${JSON.stringify(videoUrl)};\n${estimate}\n${mock}`);
   await page.goto('file://' + path.join(REPO, 'ui', 'index.html'));
   await page.waitForTimeout(800);
   // start the preview video (a click counts as the user gesture autoplay policies want)
@@ -63,9 +64,12 @@ const mock = fs.readFileSync(path.join(REPO, 'ui', 'mock-api.js'), 'utf8');
   await page.click('#tab-settings');
   await page.waitForTimeout(400);
   await page.evaluate(() => { const first = document.querySelector('.deliv-head'); if (first) first.click(); });
+  await page.waitForTimeout(300);
+  await page.evaluate(() => { const more = document.querySelector('.deliv.open details.more'); if (more) more.open = true; });
   await page.click('#btn-portal-test');
   await page.waitForTimeout(900);
-  await page.setViewportSize({ width: 1280, height: 1900 });
+  await page.setViewportSize({ width: 1280, height: 2400 });
+  await page.evaluate(() => { window.scrollTo(0, 0); document.querySelectorAll('main, .view, #view-settings').forEach((n) => { n.scrollTop = 0; }); });
   await page.waitForTimeout(300);
   await page.screenshot({ path: path.join(OUT, 'settings.png') });
   await page.setViewportSize({ width: 1280, height: 800 });
@@ -75,6 +79,24 @@ const mock = fs.readFileSync(path.join(REPO, 'ui', 'mock-api.js'), 'utf8');
   await page.setViewportSize({ width: 400, height: 900 });
   await page.waitForTimeout(300);
   await page.screenshot({ path: path.join(OUT, 'narrow.png') });
+
+  // A 9:16 timeline: the picker switches, the viewer turns vertical, the range row says "Whole timeline".
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.selectOption('#timeline-pick', 'Social Cut');
+  await page.waitForTimeout(800);
+  await page.screenshot({ path: path.join(OUT, 'vertical.png') });
+  const vertical = await page.evaluate(() => ({
+    timeline: document.getElementById('timeline-pick').value,
+    viewer: document.querySelector('.viewer').className,
+    range: document.getElementById('range-text').textContent,
+    summary: document.getElementById('export-summary').textContent,
+    conn: document.querySelector('.conn span').textContent,
+  }));
+  console.log('vertical:', JSON.stringify(vertical));
+  await page.selectOption('#timeline-pick', 'Main Edit');
+  await page.waitForTimeout(600);
+  await page.setViewportSize({ width: 400, height: 900 });
+  await page.waitForTimeout(300);
 
   const fonts = await page.evaluate(() => Array.from(document.fonts).filter((f) => f.status === 'loaded').map((f) => f.family + ' ' + f.weight));
   console.log('fonts loaded:', fonts.join(' | '));
@@ -89,6 +111,10 @@ const mock = fs.readFileSync(path.join(REPO, 'ui', 'mock-api.js'), 'utf8');
     delivs: document.querySelectorAll('.deliv').length,
     summary: document.getElementById('export-summary').textContent,
     total: document.getElementById('total-text').textContent,
+    range: document.getElementById('range-text').textContent,
+    timeline: document.getElementById('timeline-pick').value,
+    estimates: Array.from(document.querySelectorAll('.file .est')).map((e) => e.textContent).slice(0, 3),
+    formEst: (document.querySelector('.deliv-est') || {}).textContent || '',
     upload: document.getElementById('upload-text').textContent,
     portal: document.getElementById('portal-result').textContent,
     uploadedRows: document.querySelectorAll('.file.up-uploaded').length,

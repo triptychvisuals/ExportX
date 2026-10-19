@@ -53,7 +53,20 @@
     { index: 2, name: 'Trailer 30s', current: false },
     { index: 3, name: 'Social Cut', current: false },
   ];
-  const info = { name: 'Main Edit', startFrame: START, endFrame: END, fps: FPS, dropFrame: false, frames: END - START + 1 };
+  // In and Out set in Resolve (I and O): 01:00:02:00 to 01:00:50:23, so the final is 49 s of the 60 s timeline
+  const IN_OUT = { absIn: START + FPS * 2, absOut: START + FPS * 51 - 1 };
+  IN_OUT.frames = IN_OUT.absOut - IN_OUT.absIn + 1;
+  IN_OUT.tcIn = tc(IN_OUT.absIn);
+  IN_OUT.tcOut = tc(IN_OUT.absOut);
+  // Three timelines: the 60 s main edit with an In and Out set, a 30 s trailer, and a 9:16 social cut.
+  const TIMELINE_FACTS = {
+    'Main Edit': { startFrame: START, endFrame: END, frames: END - START + 1, width: 1920, height: 1080, vertical: false, inOut: IN_OUT },
+    'Trailer 30s': { startFrame: START, endFrame: START + FPS * 30 - 1, frames: FPS * 30, width: 1920, height: 1080, vertical: false, inOut: null },
+    'Social Cut': { startFrame: START, endFrame: START + FPS * 30 - 1, frames: FPS * 30, width: 1080, height: 1920, vertical: true, inOut: null },
+  };
+  const info = { name: 'Main Edit', fps: FPS, dropFrame: false, ...TIMELINE_FACTS['Main Edit'] };
+  const EST = window.ExportXEstimate || null;
+  const RESOLUTIONS = [{ width: 3840, height: 2160 }, { width: 1920, height: 1080 }, { width: 1280, height: 720 }, { width: 1080, height: 1920 }, { width: 1080, height: 1080 }];
   const markers = { 96: { kind: 'cut', dur: 132 }, 500: { kind: 'still', dur: 1 } };
 
   function buildMarks() {
@@ -91,8 +104,8 @@
   let playing = true;
   let press = null;
   setInterval(() => {
-    if (playing) playheadAbs = playheadAbs + 4 > END ? START : playheadAbs + 4;
-    emit('playhead', { ok: true, tc: tc(playheadAbs), absFrame: playheadAbs, relFrame: playheadAbs - START, timeline: 'Main Edit', fps: FPS, playing, info });
+    if (playing) playheadAbs = playheadAbs + 4 > info.endFrame ? START : playheadAbs + 4;
+    emit('playhead', { ok: true, tc: tc(playheadAbs), absFrame: playheadAbs, relFrame: playheadAbs - START, timeline: info.name, fps: FPS, playing, info });
   }, 150);
 
   const sanitize = (s) => String(s).replace(/[\\/:*?"<>|]/g, '_').replace(/_{2,}/g, '_').replace(/^_+|_+$/g, '');
@@ -119,13 +132,24 @@
     portalProjects: PROJECTS, portalProjectByResolve: { SpotA_Launch: 'proj-spota' },
   };
 
+  function estimateFor(p, frames, kind) {
+    if (!EST || !frames) return null;
+    return EST.estimateBytes({ format: p.format, codec: p.codec, settings: p.settings, width: p.resolution ? p.resolution.width : info.width, height: p.resolution ? p.resolution.height : info.height, fps: p.frameRate || FPS, frames, kind });
+  }
+
   function plan(req) {
-    const tls = req.timelines || ['Main Edit'];
+    const tls = req.timelines || [info.name];
     const targets = req.targets || ['timeline', 'cuts', 'stills'];
     const items = [];
     const notes = [];
-    const marks = buildMarks();
+    const useInOut = req.useInOut !== false;
+    const range = useInOut && info.inOut ? info.inOut : null;
+    const all = buildMarks();
+    const marks = range ? all.filter((m) => m.absIn >= range.absIn && m.absIn <= range.absOut) : all;
+    const finalFrames = range ? range.frames : info.frames;
+    const facts = {};
     for (const tl of tls) {
+      facts[tl] = { ...info, name: tl, range };
       for (const id of req.profileIds) {
         const p = profiles.find((x) => x.id === id);
         if (!p || !targets.includes(p.target)) continue;
@@ -134,7 +158,7 @@
         const base = { timeline: tl, profileId: p.id, profileName: p.name, target: p.target, targetDir: dir };
         const opts = { underscoreSpaces: settings.underscoreSpaces !== false };
         if (p.target === 'timeline') {
-          items.push({ ...base, kind: 'final', fileName: nameWith(req.nameTemplate, ctx, opts) + (p.fileSuffix || ''), range: null, mark: null });
+          items.push({ ...base, kind: 'final', fileName: nameWith(req.nameTemplate, ctx, opts) + (p.fileSuffix || ''), range: range ? { markIn: range.absIn, markOut: range.absOut } : null, mark: null, durationFrames: finalFrames, estimate: estimateFor(p, finalFrames, 'final') });
           continue;
         }
         const kind = p.target === 'cuts' ? 'cut' : 'still';
@@ -147,16 +171,19 @@
         if (!/\{(cut|n|tc|in|still)\}/.test(tpl)) tpl += '_{n}';
         for (const m of list) {
           const n = pad2(m.index);
+          const frames = kind === 'still' ? 1 : m.durationFrames;
           items.push({
             ...base, kind,
             fileName: nameWith(tpl, { ...ctx, cut: n, still: n, n, tc: m.tcIn.replace(/:/g, '.'), tcout: m.tcOut.replace(/:/g, '.'), in: m.absIn, out: m.absOut }, opts) + (p.fileSuffix || ''),
             range: { markIn: m.absIn, markOut: m.absOut },
             mark: { index: m.index, kind, tcIn: m.tcIn, tcOut: m.tcOut, duration: m.duration, durationFrames: m.durationFrames },
+            durationFrames: frames,
+            estimate: estimateFor(p, frames, kind),
           });
         }
       }
     }
-    return { items, notes };
+    return { items, notes, timelines: facts };
   }
 
   // ---- fake render queue
@@ -252,7 +279,17 @@
   window.__exportxMock = { emit, get jobs() { return jobs; }, setPlaying: (v) => { playing = v; }, finishRender };
 
   window.exportx = {
-    status: async () => ({ connected: true, mock: true, product: 'DaVinci Resolve Studio', version: '20.1', project: 'SpotA_Launch', timeline: 'Main Edit', timelines, rendering: Boolean(renderTimer), userDir: '/Users/you/.exportx' }),
+    status: async () => ({ connected: true, mock: true, product: 'DaVinci Resolve Studio', version: '20.1', project: 'SpotA_Launch', timeline: info.name, timelines, rendering: Boolean(renderTimer), userDir: '/Users/you/.exportx' }),
+    setTimeline: async (name) => {
+      const t = timelines.find((x) => x.name === name);
+      if (!t) throw new Error(`No timeline called "${name}"`);
+      for (const x of timelines) x.current = x === t;
+      Object.assign(info, TIMELINE_FACTS[name], { name });
+      if (playheadAbs > info.endFrame) playheadAbs = START;
+      log(`Switched to timeline "${name}" (${info.width}×${info.height}${info.vertical ? ', vertical' : ''})`);
+      return { ...info };
+    },
+    resolutions: async () => RESOLUTIONS,
     profiles: async () => ({ profiles: (profiles = profileList()), errors: [], userDir: '/Users/you/.exportx/profiles' }),
     capabilities: async (opts) => {
       if (!(opts && opts.quiet)) for (const f of CAPS.formats) log(`Format ${f.id} (${f.description}): ${f.codecs.map((c) => `${c.id} [${c.description}]`).join(', ')}`);
@@ -267,7 +304,7 @@
       return { profiles: (profiles = profileList()), errors: [], userDir: '/Users/you/.exportx/profiles' };
     },
     deleteProfile: async (id) => { overrides.delete(id); return { profiles: (profiles = profileList()), errors: [], userDir: '/Users/you/.exportx/profiles' }; },
-    previewStatus: async () => ({ key: 'SpotA_Launch__Main_Edit', project: 'SpotA_Launch', timeline: 'Main Edit', fps: FPS, startFrame: START, endFrame: END, dropFrame: false, ready: previewReady, stale: false, file: previewReady ? PREVIEW_URL : null, renderedAt: previewReady ? new Date().toISOString() : null, width: 320, height: 180, rendering: previewTimer ? 50 : null }),
+    previewStatus: async () => ({ key: `SpotA_Launch__${info.name.replace(/\s+/g, '_')}`, project: 'SpotA_Launch', timeline: info.name, fps: FPS, startFrame: info.startFrame, endFrame: info.endFrame, timelineStart: info.startFrame, timelineEnd: info.endFrame, inOut: info.inOut, ranged: false, vertical: info.vertical, dropFrame: false, ready: previewReady, stale: false, file: previewReady ? PREVIEW_URL : null, renderedAt: previewReady ? new Date().toISOString() : null, width: info.vertical ? 180 : 320, height: info.vertical ? 320 : 180, rendering: previewTimer ? 50 : null }),
     previewRender: async () => {
       if (!PREVIEW_URL) throw new Error('This preview page has no sample video bundled');
       previewReady = false;
@@ -282,7 +319,7 @@
           previewTimer = null;
           previewReady = true;
           log('Preview ready (sample video)');
-          emit('preview', { key: 'k', rendering: false, ready: true, stale: false, file: PREVIEW_URL, fps: FPS, startFrame: START, endFrame: END, timeline: 'Main Edit' });
+          emit('preview', { key: 'k', rendering: false, ready: true, stale: false, file: PREVIEW_URL, fps: FPS, startFrame: info.startFrame, endFrame: info.endFrame, timeline: info.name, vertical: info.vertical });
         }
       }, 250);
       return { jobId: 'preview', key: 'k' };
@@ -292,7 +329,7 @@
     openProfilesFolder: async () => { log('Would open ~/.exportx/profiles'); return true; },
     openProfileFile: async () => true,
     marks: async () => ({ info, marks: buildMarks() }),
-    markBegin: async (at) => { const abs = at && Number.isFinite(Number(at.absFrame)) ? Math.round(Number(at.absFrame)) : playheadAbs; press = { absIn: abs, tc: tc(abs), fps: FPS, startedAt: Date.now(), timeline: 'Main Edit', source: at && at.absFrame != null ? 'preview' : 'resolve' }; return press; },
+    markBegin: async (at) => { const abs = at && Number.isFinite(Number(at.absFrame)) ? Math.round(Number(at.absFrame)) : playheadAbs; press = { absIn: abs, tc: tc(abs), fps: FPS, startedAt: Date.now(), timeline: info.name, source: at && at.absFrame != null ? 'preview' : 'resolve' }; return press; },
     markEnd: async (at) => {
       if (!press) throw new Error('No press in progress');
       const end = at && Number.isFinite(Number(at.absFrame)) ? Math.round(Number(at.absFrame)) : playheadAbs;

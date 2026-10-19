@@ -37,7 +37,12 @@
     markSource: $('mark-source'),
     btnMarkSource: $('btn-mark-source'),
     // step 2: capture
-    captureTl: $('capture-tl'),
+    timelinePick: $('timeline-pick'),
+    captureFps: $('capture-fps'),
+    rangeRow: $('range-row'),
+    rangeText: $('range-text'),
+    rangeSwitch: $('range-switch'),
+    optInOut: $('opt-inout'),
     playState: $('play-state'),
     playhead: $('playhead'),
     keyCut: $('key-cut'),
@@ -102,6 +107,13 @@
   const TARGET_LABEL = { timeline: 'Whole timeline', cuts: 'Each cut', stills: 'Each still' };
   const QUALITIES = ['Least', 'Low', 'Medium', 'High', 'Best'];
   const AUTO_CODEC = /^(auto|\*|first|default)$/i;
+  const EST = window.ExportXEstimate || null;
+  const CUT_SUB = 'hold while it plays, release to finish';
+  const FRAME_RATES = ['23.976', '24', '25', '29.97', '30', '47.952', '48', '50', '59.94', '60'];
+  const ENCODING_PROFILES = { h264: ['Baseline', 'Main', 'High', 'High 4:2:2', 'High 4:4:4'], h265: ['Main', 'Main10', 'Main 4:2:2 10', 'Main 4:4:4'] };
+  const AUDIO_CODECS = [['aac', 'AAC'], ['lpcm', 'Linear PCM'], ['mp3', 'MP3']];
+  const COLOR_SPACES = ['Same as Project', 'Rec.709', 'Rec.2020', 'Rec.2100 ST2084', 'Rec.2100 HLG', 'P3-D65', 'sRGB'];
+  const GAMMAS = ['Same as Project', 'Rec.709', 'Gamma 2.2', 'Gamma 2.4', 'sRGB', 'ST2084', 'HLG', 'ACEScct', 'Linear'];
 
   const state = {
     view: 'export',
@@ -124,6 +136,7 @@
     caps: null,
     capsPromise: null,
     openDelivs: new Set(),
+    resolutions: new Map(),
     resolvePlayhead: null,
     preview: { status: null, source: 'preview', mediaTime: null, loadedFile: null, rvfc: 0, seekTimer: null },
     lastSummary: null,
@@ -228,6 +241,7 @@
       timelines: pickedTimelines(),
       clearExisting: el.optClear.checked,
       startRender: Boolean(startRender),
+      useInOut: el.optInOut.checked,
       upload: portalConfigured() ? el.optUpload.checked : undefined,
       portalProjectId: uploadWanted() ? state.portal.projectId || undefined : undefined,
     };
@@ -249,8 +263,9 @@
     el.btnStop.classList.toggle('hidden', !state.rendering);
     el.btnGo.classList.toggle('hidden', state.rendering);
     el.bgHint.classList.toggle('hidden', !state.rendering);
-    el.keyCut.disabled = !isConnected();
-    el.keyStill.disabled = !isConnected();
+    el.keyCut.classList.toggle('off', !isConnected());
+    el.keyStill.classList.toggle('off', !isConnected());
+    el.timelinePick.disabled = !isConnected() || state.busy || state.rendering;
     const n = state.plan.items.length;
     const verb = el.optStart.checked ? 'Export' : 'Queue';
     el.btnGo.textContent = n ? `${verb} everything · ${plural(n, 'file')}` : `${verb} everything`;
@@ -303,6 +318,8 @@
       if (s.rendering && !state.rendering) showBanner('Resolve is already rendering. Wait for it to finish before exporting more.', 'info');
     }
     renderTimelines();
+    renderTimelinePick();
+    renderRangeRow();
     renderNameExamples();
     pickDefaultProject();
     renderPortalControls();
@@ -336,6 +353,95 @@
     }
     const picked = pickedTimelines();
     el.navHint.textContent = !list.length ? '' : !picked || picked.length === 1 ? 'Exports the current timeline. Pick more to export them too.' : `Exports ${picked.length} timelines.`;
+  }
+
+  // ------------------------------------------------------------ which timeline, which part of it
+
+  function renderTimelinePick() {
+    const list = timelineList();
+    const current = list.find((t) => t.current);
+    el.timelinePick.innerHTML = '';
+    if (!list.length) {
+      el.timelinePick.appendChild(option('', isConnected() ? 'No timeline open' : 'No timeline', true));
+      return;
+    }
+    for (const tl of list) el.timelinePick.appendChild(option(tl.name, tl.name, Boolean(tl.current)));
+    if (!current) el.timelinePick.insertBefore(option('', 'Pick a timeline', true), el.timelinePick.firstChild);
+  }
+
+  /** Make another timeline the one the panel marks, previews and exports. */
+  async function switchTimeline(name) {
+    if (!name || !isConnected()) return;
+    setBusy(true);
+    try {
+      await api.setTimeline(name);
+      state.timelinesPicked = new Set([name]);
+      state.marks = [];
+      state.resolvePlayhead = null;
+      state.preview.loadedFile = null;
+      showBanner(null);
+      await refreshStatus();
+    } catch (err) {
+      showBanner(err.message);
+      renderTimelinePick();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /** The facts of the timeline the panel is on: from the last plan (which knows the In/Out range), else from the playhead poll. */
+  function currentTimelineFacts() {
+    const name = (state.status && state.status.timeline) || null;
+    const fromPlan = state.plan && state.plan.timelines && name ? state.plan.timelines[name] : null;
+    if (fromPlan) return fromPlan;
+    const info = state.resolvePlayhead && state.resolvePlayhead.info;
+    if (info) return { ...info, range: el.optInOut.checked && info.inOut ? info.inOut : null };
+    return null;
+  }
+
+  function renderRangeRow() {
+    const facts = currentTimelineFacts();
+    const inOut = facts && facts.inOut;
+    el.rangeSwitch.classList.toggle('hidden', !inOut);
+    el.rangeRow.classList.toggle('ranged', Boolean(inOut && el.optInOut.checked));
+    if (!facts) {
+      el.rangeText.textContent = 'Whole timeline';
+      return;
+    }
+    const fps = facts.fps || 24;
+    if (inOut) {
+      el.rangeText.innerHTML = el.optInOut.checked
+        ? `In to Out <b>${escapeHtml(inOut.tcIn)}</b> → <b>${escapeHtml(inOut.tcOut)}</b> · ${escapeHtml(secondsLabel(inOut.frames, fps))}`
+        : `Whole timeline · ${escapeHtml(secondsLabel(facts.frames, fps))} (In to Out is set but off)`;
+    } else {
+      el.rangeText.textContent = `Whole timeline · ${secondsLabel(facts.frames || 0, fps)}${facts.frames ? ' · set In and Out in Resolve (I, O) to export a part' : ''}`;
+    }
+  }
+
+  function sumEstimates(items) {
+    let bytes = 0;
+    let exact = true;
+    let any = false;
+    for (const it of items) {
+      if (!it.estimate || it.estimate.bytes === null || it.estimate.bytes === undefined) continue;
+      any = true;
+      bytes += it.estimate.bytes;
+      if (!it.estimate.exact) exact = false;
+    }
+    return { bytes: any ? bytes : null, exact };
+  }
+
+  function estHtml(est) {
+    const text = EST ? EST.sizeLabel(est) : '';
+    return text ? `<span class="est">${escapeHtml(text)}</span>` : '';
+  }
+
+  /** What the plan says this deliverable weighs on the current timeline (all its files together). */
+  function profileEstimate(p) {
+    const items = (state.plan.items || []).filter((it) => it.profileId === p.id);
+    if (!items.length) return null;
+    const total = sumEstimates(items);
+    return total.bytes === null ? null : { bytes: total.bytes, exact: total.exact };
   }
 
   // ------------------------------------------------------------ profiles (shared by step 1 and settings)
@@ -389,7 +495,7 @@
       li.innerHTML =
         `<span class="inc" role="checkbox" aria-checked="${on}">${CHECK}</span>` +
         `<div class="name">${escapeHtml(p.name)}${tag}</div>` +
-        `<span class="meta">${escapeHtml(profileMeta(p))}</span>`;
+        `<span class="meta">${escapeHtml(profileMeta(p))}${estHtml(profileEstimate(p))}</span>`;
       li.addEventListener('click', () => {
         if (state.included.has(p.id)) state.included.delete(p.id);
         else state.included.add(p.id);
@@ -546,7 +652,7 @@
         .join('')}${p.renderPreset && !presets.includes(p.renderPreset) ? `<option value="${escapeHtml(p.renderPreset)}" selected>${escapeHtml(p.renderPreset)} (not found)</option>` : ''}</select></label>` +
       `<label>Format${haveCaps ? '<select name="format"></select>' : `<input type="text" name="format" value="${escapeHtml(p.format)}" placeholder="mp4">`}</label>` +
       `<label>Codec${haveCaps ? '<select name="codec"></select>' : `<input type="text" name="codec" value="${escapeHtml(p.codec)}" placeholder="H264 or auto">`}</label>` +
-      `<label>Size<span class="size"><input type="text" name="width" inputmode="numeric" value="${p.resolution ? p.resolution.width : ''}" placeholder="timeline"><span>×</span><input type="text" name="height" inputmode="numeric" value="${p.resolution ? p.resolution.height : ''}" placeholder="timeline"></span></label>` +
+      `<label>Size<span class="size"><select name="sizepick"><option value="">Timeline's</option></select><input type="text" name="width" inputmode="numeric" value="${p.resolution ? p.resolution.width : ''}" placeholder="w" hidden><span class="size-x" hidden>×</span><input type="text" name="height" inputmode="numeric" value="${p.resolution ? p.resolution.height : ''}" placeholder="h" hidden></span></label>` +
       `<label>Quality<span class="quality"><select name="quality"><option value=""${q.select === '' ? ' selected' : ''}>Automatic</option>${QUALITIES.map((v) => `<option value="${v}"${q.select === v ? ' selected' : ''}>${v}</option>`).join('')}<option value="custom"${q.select === 'custom' ? ' selected' : ''}>Bit rate…</option></select><input type="text" name="bitrate" inputmode="numeric" placeholder="kb/s" value="${escapeHtml(q.bitrate)}"${q.select === 'custom' ? '' : ' hidden'}></span></label>` +
       `<label class="wide">Folder inside the output folder<input type="text" name="subfolder" value="${escapeHtml(p.subfolder || '')}" placeholder="(none)"></label>` +
       `<div class="switches">` +
@@ -554,6 +660,8 @@
       `<label class="switch"><input type="checkbox" name="enabledByDefault"${p.enabledByDefault !== false ? ' checked' : ''}><i></i><span>Ticked by default</span></label>` +
       `</div>` +
       `</div>` +
+      moreSettingsHtml(p) +
+      `<p class="deliv-est" data-est></p>` +
       `<div class="row wrap deliv-actions">` +
       `<button type="submit" class="btn small primary">Save</button>` +
       `<button type="button" class="btn small" data-act="duplicate">Duplicate</button>` +
@@ -564,11 +672,95 @@
       `<p class="deliv-note" data-note></p>`;
 
     const f = (n) => form.querySelector(`[name="${n}"]`);
+    const note = form.querySelector('[data-note]');
+    const say = (text, warn) => {
+      note.textContent = text || '';
+      note.className = `deliv-note${warn ? ' warn' : ''}`;
+    };
     if (haveCaps) {
       fillFormatSelect(f('format'), p.format);
       fillCodecSelect(f('codec'), f('format').value, p.codec);
-      f('format').addEventListener('change', () => fillCodecSelect(f('codec'), f('format').value, 'auto'));
+      f('format').addEventListener('change', () => {
+        fillCodecSelect(f('codec'), f('format').value, 'auto');
+        loadSizes();
+      });
+      f('codec').addEventListener('change', loadSizes);
     }
+    // Size: the list Resolve offers for this format and codec, the timeline's own, or a custom pair.
+    const sizeInputs = [f('width'), f('height'), form.querySelector('.size-x')];
+    const showSizeInputs = (on) => sizeInputs.forEach((n) => { n.hidden = !on; });
+    function fillSizes(list) {
+      const sel = f('sizepick');
+      const w = f('width').value.trim();
+      const h = f('height').value.trim();
+      const current = w && h ? `${w}×${h}` : '';
+      sel.innerHTML = '';
+      sel.appendChild(option('', "Timeline's", !current));
+      let found = !current;
+      for (const r of list) {
+        const v = `${r.width}×${r.height}`;
+        if (v === current) found = true;
+        sel.appendChild(option(v, `${r.width} × ${r.height}${r.width === 1080 && r.height === 1920 ? ' (vertical)' : ''}`, v === current));
+      }
+      sel.appendChild(option('custom', 'Custom…', Boolean(current) && !found));
+      showSizeInputs(Boolean(current) && !found);
+    }
+    function loadSizes() {
+      const key = `${f('format').value}|${f('codec').value}`;
+      const cached = state.resolutions.get(key);
+      fillSizes(cached || []);
+      if (cached || !isConnected()) return;
+      api.resolutions({ format: f('format').value, codec: f('codec').value })
+        .then((list) => {
+          state.resolutions.set(key, list || []);
+          if (form.isConnected) fillSizes(list || []);
+        })
+        .catch(() => state.resolutions.set(key, []));
+    }
+    f('sizepick').addEventListener('change', () => {
+      const v = f('sizepick').value;
+      if (v === 'custom') {
+        showSizeInputs(true);
+        f('width').focus();
+      } else {
+        const [w, h] = v ? v.split('×') : ['', ''];
+        f('width').value = w;
+        f('height').value = h;
+        showSizeInputs(false);
+      }
+      updateEstimate();
+    });
+    loadSizes();
+    const estLine = form.querySelector('[data-est]');
+    function updateEstimate() {
+      if (!EST) return;
+      const { out } = readForm(f, p);
+      const facts = currentTimelineFacts();
+      if (!facts || !facts.fps) {
+        estLine.textContent = isConnected() ? '' : 'Connect to Resolve to see a file size for this timeline.';
+        return;
+      }
+      const width = out.resolution ? out.resolution.width : facts.width;
+      const height = out.resolution ? out.resolution.height : facts.height;
+      const fps = out.frameRate || facts.fps;
+      const base = { format: out.format, codec: out.codec, settings: out.settings, width, height, fps };
+      let text = '';
+      if (out.target === 'stills') {
+        const e = EST.estimateBytes({ ...base, frames: 1, kind: 'still' });
+        text = e.bytes ? `<b>${EST.sizeLabel(e)}</b> per still at ${width}×${height}` : '';
+      } else if (out.target === 'cuts') {
+        const e = EST.estimateBytes({ ...base, frames: Math.round(fps * 10), kind: 'cut' });
+        text = e.bytes ? `<b>${EST.sizeLabel(e)}</b> per 10-second cut (${e.basis})` : '';
+      } else {
+        const frames = facts.range ? facts.range.frames : facts.frames;
+        const e = EST.estimateBytes({ ...base, frames, kind: 'final' });
+        text = e.bytes ? `<b>${EST.sizeLabel(e)}</b> for ${escapeHtml(facts.name || 'this timeline')} (${secondsLabel(frames, fps)}${facts.range ? ', In to Out' : ''}, ${e.basis})` : '';
+      }
+      estLine.innerHTML = text;
+    }
+    form.addEventListener('input', updateEstimate);
+    form.addEventListener('change', updateEstimate);
+    setTimeout(updateEstimate, 0);
     const levelNote = () => {
       const level = QUALITIES.includes(f('quality').value);
       const h26x = /^h\.?26[45]$/i.test(String(f('codec').value || '').trim());
@@ -586,44 +778,12 @@
       f('audio').closest('.switch').style.display = stills ? 'none' : '';
     });
     if (profileTarget(p) === 'stills') f('audio').closest('.switch').style.display = 'none';
-    const note = form.querySelector('[data-note]');
-    const say = (text, warn) => {
-      note.textContent = text || '';
-      note.className = `deliv-note${warn ? ' warn' : ''}`;
-    };
     if (!haveCaps) say(isConnected() ? 'Format and codec lists are not available right now; type the ids Resolve uses (see Advanced › List formats & codecs).' : 'Connect to Resolve to pick formats and codecs from a list.');
 
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
-      const name = f('name').value.trim();
-      if (!name) return say('Give the deliverable a name.', true);
-      const w = f('width').value.trim();
-      const h = f('height').value.trim();
-      if ((w && !h) || (!w && h)) return say('Set both width and height, or leave both empty to use the timeline size.', true);
-      const settings = { ...(p.settings || {}) };
-      const quality = f('quality').value;
-      if (quality === '') delete settings.VideoQuality;
-      else if (quality === 'custom') {
-        const kb = Number(f('bitrate').value);
-        if (!kb) return say('Enter a bit rate in kb/s, or pick a quality level.', true);
-        settings.VideoQuality = kb;
-      } else settings.VideoQuality = quality;
-      if (f('target').value !== 'stills') settings.ExportAudio = f('audio').checked;
-      const { source, isUser, hasBundled, ...rest } = p; // eslint-disable-line no-unused-vars
-      const out = {
-        ...rest,
-        name,
-        label: f('label').value.trim() || undefined,
-        target: f('target').value,
-        format: f('format').value.trim(),
-        codec: f('codec').value.trim() || 'auto',
-        renderPreset: f('renderPreset').value || null,
-        resolution: w && h ? { width: Number(w), height: Number(h) } : null,
-        settings,
-        subfolder: f('subfolder').value.trim().replace(/^[\\/]+|[\\/]+$/g, ''),
-        enabledByDefault: f('enabledByDefault').checked,
-      };
-      if (!out.label) delete out.label;
+      const { out, problem } = readForm(f, p);
+      if (problem) return say(problem, true);
       try {
         say('Saving…');
         const result = await api.saveProfile(out);
@@ -667,6 +827,112 @@
       }
     });
     return form;
+  }
+
+  /**
+   * The deliverable as the form describes it right now. `problem` is the one
+   * sentence to show instead of saving; `out` is always filled, so the size
+   * estimate can follow every keystroke.
+   */
+  function readForm(f, p) {
+    let problem = '';
+    const name = f('name').value.trim();
+    if (!name) problem = 'Give the deliverable a name.';
+    const w = f('width').value.trim();
+    const h = f('height').value.trim();
+    if (!problem && ((w && !h) || (!w && h))) problem = 'Set both width and height, or leave both empty to use the timeline size.';
+    const settings = { ...(p.settings || {}) };
+    const quality = f('quality').value;
+    if (quality === '') delete settings.VideoQuality;
+    else if (quality === 'custom') {
+      const kb = Number(f('bitrate').value);
+      if (!kb && !problem) problem = 'Enter a bit rate in kb/s, or pick a quality level.';
+      if (kb) settings.VideoQuality = kb;
+      else delete settings.VideoQuality;
+    } else settings.VideoQuality = quality;
+    const target = f('target').value;
+    if (target !== 'stills') settings.ExportAudio = f('audio').checked;
+    const setOrDrop = (key, value) => {
+      if (value === '' || value === null || value === undefined || value === false) delete settings[key];
+      else settings[key] = value;
+    };
+    const num = (v) => (v === '' ? '' : Number(v));
+    setOrDrop('EncodingProfile', f('encodingProfile').value);
+    setOrDrop('MultiPassEncode', f('multipass').checked);
+    setOrDrop('AudioCodec', f('audioCodec').value);
+    setOrDrop('AudioBitDepth', num(f('audioBitDepth').value));
+    setOrDrop('AudioSampleRate', num(f('audioSampleRate').value));
+    setOrDrop('ColorSpaceTag', f('colorSpace').value.trim());
+    setOrDrop('GammaTag', f('gamma').value.trim());
+    setOrDrop('PixelAspectRatio', f('par').value);
+    setOrDrop('ExportAlpha', f('alpha').checked);
+    setOrDrop('AlphaMode', f('alpha').checked ? num(f('alphaMode').value) : '');
+    setOrDrop('NetworkOptimization', f('netopt').checked);
+    setOrDrop('UniqueFilenameStyle', num(f('uniqueName').value));
+    const { source, isUser, hasBundled, ...rest } = p; // eslint-disable-line no-unused-vars
+    const out = {
+      ...rest,
+      name,
+      label: f('label').value.trim() || undefined,
+      target,
+      format: f('format').value.trim(),
+      codec: f('codec').value.trim() || 'auto',
+      renderPreset: f('renderPreset').value || null,
+      renderMode: f('renderMode').value === 'individual' ? 'individual' : 'single',
+      frameRate: f('frameRate').value ? Number(f('frameRate').value) : null,
+      resolution: w && h ? { width: Number(w), height: Number(h) } : null,
+      settings,
+      subfolder: f('subfolder').value.trim().replace(/^[\\/]+|[\\/]+$/g, ''),
+      enabledByDefault: f('enabledByDefault').checked,
+    };
+    if (!out.label) delete out.label;
+    return { out, problem };
+  }
+
+  /** The rest of what Project.SetRenderSettings() takes, folded away until wanted. */
+  function moreSettingsHtml(p) {
+    const s = p.settings || {};
+    const sel = (name, options, current, first) =>
+      `<select name="${name}">${first ? `<option value="">${escapeHtml(first)}</option>` : ''}${options
+        .map((o) => {
+          const [v, t] = Array.isArray(o) ? o : [o, o];
+          return `<option value="${escapeHtml(String(v))}"${String(current) === String(v) ? ' selected' : ''}>${escapeHtml(String(t))}</option>`;
+        })
+        .join('')}</select>`;
+    const codecKey = /h\.?265|hevc/i.test(p.codec) ? 'h265' : /h\.?264|avc/i.test(p.codec) ? 'h264' : null;
+    const encodings = codecKey ? ENCODING_PROFILES[codecKey] : [...ENCODING_PROFILES.h264, ...ENCODING_PROFILES.h265.filter((x) => !ENCODING_PROFILES.h264.includes(x))];
+    const open = Boolean(p.frameRate || s.EncodingProfile || s.ColorSpaceTag || s.GammaTag || s.ExportAlpha || s.PixelAspectRatio);
+    return (
+      `<details class="more"${open ? ' open' : ''}><summary>More settings: frame rate, audio, encoding, colour tags, alpha</summary><div class="grid2">` +
+      `<label>Frame rate${sel('frameRate', FRAME_RATES, p.frameRate == null ? '' : String(p.frameRate), "Timeline's")}</label>` +
+      `<label>Render as${sel('renderMode', [['single', 'One file'], ['individual', 'One file per clip']], p.renderMode === 'individual' ? 'individual' : 'single')}</label>` +
+      `<label>Encoding profile (H.264, H.265)${sel('encodingProfile', encodings, s.EncodingProfile || '', 'Automatic')}</label>` +
+      `<label>Audio codec${sel('audioCodec', AUDIO_CODECS, s.AudioCodec || '', 'Format default')}</label>` +
+      `<label>Audio bit depth (Linear PCM)${sel('audioBitDepth', ['16', '24', '32'], s.AudioBitDepth ? String(s.AudioBitDepth) : '', 'Default')}</label>` +
+      `<label>Audio sample rate${sel('audioSampleRate', ['44100', '48000', '96000'], s.AudioSampleRate ? String(s.AudioSampleRate) : '', 'Default')}</label>` +
+      `<label>Colour space tag<input type="text" name="colorSpace" list="exportx-colorspaces" value="${escapeHtml(s.ColorSpaceTag || '')}" placeholder="Same as Project"></label>` +
+      `<label>Gamma tag<input type="text" name="gamma" list="exportx-gammas" value="${escapeHtml(s.GammaTag || '')}" placeholder="Same as Project"></label>` +
+      `<label>Pixel aspect${sel('par', [['square', 'Square'], ['cinemascope', 'Cinemascope'], ['16_9', '16:9 (SD)'], ['4_3', '4:3 (SD)']], s.PixelAspectRatio || '', 'Default')}</label>` +
+      `<label>Alpha mode${sel('alphaMode', [['0', 'Premultiplied'], ['1', 'Straight']], s.AlphaMode == null ? '' : String(s.AlphaMode), 'Default')}</label>` +
+      `<label>Numbering (one file per clip)${sel('uniqueName', [['0', 'Number first'], ['1', 'Number last']], s.UniqueFilenameStyle == null ? '' : String(s.UniqueFilenameStyle), 'Default')}</label>` +
+      `<div class="switches">` +
+      `<label class="switch"><input type="checkbox" name="multipass"${s.MultiPassEncode ? ' checked' : ''}><i></i><span>Multi-pass encode</span></label>` +
+      `<label class="switch"><input type="checkbox" name="alpha"${s.ExportAlpha ? ' checked' : ''}><i></i><span>Export alpha</span></label>` +
+      `<label class="switch"><input type="checkbox" name="netopt"${s.NetworkOptimization ? ' checked' : ''}><i></i><span>Fast start (MP4, MOV)</span></label>` +
+      `</div></div>` +
+      `<p class="hint">These are the parameters Resolve's render API takes; they go to the Deliver page as is. Anything the chosen format and codec do not offer is dropped with a note when the batch is queued. A key with no control here goes in the JSON file (Open JSON).</p>` +
+      `</details>`
+    );
+  }
+
+  function ensureDatalists() {
+    if ($('exportx-colorspaces')) return;
+    for (const [id, values] of [['exportx-colorspaces', COLOR_SPACES], ['exportx-gammas', GAMMAS]]) {
+      const dl = document.createElement('datalist');
+      dl.id = id;
+      for (const v of values) dl.appendChild(option(v, v, false));
+      document.body.appendChild(dl);
+    }
   }
 
   function uniqueId(base) {
@@ -770,6 +1036,7 @@
     el.viewer.classList.toggle('empty', !ready && !rendering);
     el.viewer.classList.toggle('busy', Boolean(rendering));
     el.viewer.classList.toggle('stale', Boolean(ready && st.stale));
+    el.viewer.classList.toggle('vertical', Boolean(st && (st.vertical || (st.width && st.height && st.height > st.width))));
     el.viewerEmpty.classList.toggle('hidden', ready || Boolean(rendering));
     el.viewerBusy.classList.toggle('hidden', !rendering);
     if (rendering) {
@@ -842,9 +1109,10 @@
     if (!st || !st.ready) return;
     const total = Math.max(1, st.endFrame - st.startFrame + 1);
     for (const m of state.marks) {
+      if (m.absOut < st.startFrame || m.absIn > st.endFrame) continue; // outside a ranged preview
       const i = document.createElement('i');
       i.className = m.kind;
-      i.style.left = `${(m.relIn / total) * 100}%`;
+      i.style.left = `${((m.absIn - st.startFrame) / total) * 100}%`;
       if (m.kind === 'cut') i.style.width = `${Math.max(0.3, (m.durationFrames / total) * 100)}%`;
       i.title = m.kind === 'cut' ? `Cut ${m.index}: ${m.tcIn} → ${m.tcOut}` : `Still ${m.index}: ${m.tcIn}`;
       el.scrubMarks.appendChild(i);
@@ -948,7 +1216,7 @@
     const r = state.resolvePlayhead;
     if (markingFromPreview()) {
       const st = state.preview.status;
-      el.captureTl.textContent = `${st.timeline} · ${fpsLabel(st.fps)}`;
+      el.captureFps.textContent = fpsLabel(st.fps);
       const playing = !pv.paused && !pv.ended;
       el.playState.className = `play${playing ? ' on' : ''}`;
       el.playState.lastElementChild.textContent = `${playing ? 'preview playing' : 'preview paused'}${r && r.ok ? ` · Resolve at ${r.tc}` : ''}`;
@@ -959,13 +1227,14 @@
       el.playhead.textContent = '--:--:--:--';
       el.playState.className = 'play';
       el.playState.lastElementChild.textContent = 'stopped';
-      el.captureTl.textContent = r && r.error ? 'Open a timeline in Resolve' : 'No timeline';
+      el.captureFps.textContent = r && r.error ? 'open a timeline in Resolve' : '';
       return;
     }
     el.playhead.textContent = r.tc;
     el.playState.className = `play${r.playing ? ' on' : ''}`;
     el.playState.lastElementChild.textContent = r.playing ? 'playing in Resolve' : 'stopped';
-    el.captureTl.textContent = `${r.timeline} · ${fpsLabel(r.fps)}`;
+    el.captureFps.textContent = fpsLabel(r.fps);
+    if (r.info && r.info.inOut !== undefined && !(state.plan && state.plan.timelines && state.plan.timelines[r.timeline])) renderRangeRow();
     if (state.press) el.keyCutLive.textContent = `IN ${state.press.tc} · ${secondsLabel(r.absFrame - state.press.absIn + 1, r.fps)}`;
   }
 
@@ -1104,7 +1373,7 @@
       state.press = null;
       state.pressing = false;
       el.keyCut.classList.remove('holding');
-      el.keyCutLive.textContent = '';
+      el.keyCutLive.textContent = CUT_SUB;
       showBanner(err.message);
     }
   }
@@ -1117,7 +1386,7 @@
     const at = { ...pressAt(), kind: 'cut' };
     state.press = null;
     el.keyCut.classList.remove('holding');
-    el.keyCutLive.textContent = '';
+    el.keyCutLive.textContent = CUT_SUB;
     if (!had) return;
     try {
       const result = await api.markEnd(at);
@@ -1151,25 +1420,7 @@
   }
 
   function wireCapture() {
-    el.keyCut.addEventListener('pointerdown', (e) => {
-      if (e.button !== 0) return;
-      e.preventDefault();
-      try {
-        el.keyCut.setPointerCapture(e.pointerId);
-      } catch (_err) {
-        /* not supported */
-      }
-      beginPress();
-    });
-    el.keyCut.addEventListener('pointerup', endPress);
-    el.keyCut.addEventListener('pointercancel', endPress);
-    el.keyCut.addEventListener('keydown', (e) => {
-      if (e.key === ' ' || e.key === 'Enter') e.preventDefault();
-    });
-    el.keyStill.addEventListener('click', markStill);
-    el.keyStill.addEventListener('keydown', (e) => {
-      if (e.key === ' ' || e.key === 'Enter') e.preventDefault();
-    });
+    // The keycaps mirror the keyboard: they light on key-down and go dark on key-up, and take no clicks.
     el.pickCut.addEventListener('click', () => startPicking('cut'));
     el.pickStill.addEventListener('click', () => startPicking('still'));
 
@@ -1186,6 +1437,7 @@
         if (!e.repeat) beginPress();
       } else if (key === state.keys.still) {
         e.preventDefault();
+        el.keyStill.classList.add('down');
         if (!e.repeat) markStill();
       } else if (key === ' ') {
         e.preventDefault();
@@ -1198,6 +1450,7 @@
       }
     });
     document.addEventListener('keyup', (e) => {
+      if (normalizeKey(e) === state.keys.still) el.keyStill.classList.remove('down');
       if (isTyping(e) || state.view !== 'export') return;
       if (normalizeKey(e) === state.keys.cut) {
         e.preventDefault();
@@ -1205,6 +1458,7 @@
       }
     });
     window.addEventListener('blur', () => {
+      el.keyStill.classList.remove('down');
       if (state.pressing) endPress();
       if (state.picking) {
         state.picking = null;
@@ -1262,8 +1516,12 @@
     if (cuts) parts.push(plural(cuts, 'cut'));
     if (stills) parts.push(plural(stills, 'still'));
     const where = req.targetDir ? ` → ${slash(req.targetDir)}` : ' → choose a folder under Save to';
-    const noteText = notes.map((n) => n.message.replace(/ on ".*"$/, '')).filter((v, i, a) => a.indexOf(v) === i);
-    el.exportSummary.textContent = (parts.length ? parts.join(' · ') + where : 'Nothing to export yet.') + (noteText.length ? ` · ${noteText.join(' · ')}` : '');
+    const noteText = notes.map((n) => n.message.replace(/ on ".*"( left out)?$/, '$1')).filter((v, i, a) => a.indexOf(v) === i);
+    const total = sumEstimates(items);
+    const sizeText = EST && total.bytes ? ` · ${total.exact ? '' : '≈ '}${EST.formatBytes(total.bytes)}` : '';
+    el.exportSummary.textContent = (parts.length ? parts.join(' · ') + sizeText + where : 'Nothing to export yet.') + (noteText.length ? ` · ${noteText.join(' · ')}` : '');
+    renderProfiles();
+    renderRangeRow();
     updateButtons();
   }, 150);
 
@@ -1283,7 +1541,7 @@
       const error = st.error || (up && up.error) || '';
       li.innerHTML =
         `<i class="st"></i>` +
-        `<span class="fn" title="${escapeHtml(slash(job.targetDir))}/${escapeHtml(job.fileName)}">${escapeHtml(job.fileName)}${where}</span>` +
+        `<span class="fn" title="${escapeHtml(slash(job.targetDir))}/${escapeHtml(job.fileName)}">${escapeHtml(job.fileName)}${where}${estHtml(job.estimate)}</span>` +
         `<span class="state">${escapeHtml(stateText)}</span>` +
         (error ? `<span class="err">${escapeHtml(error)}</span>` : '');
       el.jobs.appendChild(li);
@@ -1640,6 +1898,13 @@
     el.btnStop.addEventListener('click', stop);
     el.btnExportCuts.addEventListener('click', () => queue(el.optStart.checked, ['cuts']));
     el.btnExportStills.addEventListener('click', () => queue(el.optStart.checked, ['stills']));
+    el.timelinePick.addEventListener('change', () => switchTimeline(el.timelinePick.value));
+    el.optInOut.addEventListener('change', () => {
+      api.saveSettings({ useInOut: el.optInOut.checked }).catch(() => {});
+      renderRangeRow();
+      schedulePlan();
+      if (isConnected()) api.previewStatus().then(applyPreviewStatus).catch(() => {});
+    });
     // settings
     el.nameTemplate.addEventListener('input', () => {
       renderNameExamples();
@@ -1697,6 +1962,8 @@
     el.optUnderscore.checked = settings.underscoreSpaces !== false;
     el.optClear.checked = Boolean(settings.clearExisting);
     el.optStart.checked = settings.startRender !== false;
+    el.optInOut.checked = settings.useInOut !== false;
+    ensureDatalists();
     state.keys = { cut: String(settings.keyCut || 'c').toLowerCase(), still: String(settings.keyStill || 's').toLowerCase() };
     renderKeys();
     state.portal = {

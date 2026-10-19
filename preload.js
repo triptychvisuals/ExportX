@@ -40,6 +40,9 @@ contextBridge.exposeInMainWorld('exportx', {
   markDelete: (relIn) => invoke('exportx:mark-delete', relIn),
   marksClear: (kind) => invoke('exportx:marks-clear', kind),
   seek: (absFrame) => invoke('exportx:seek', absFrame),
+  setTimeline: (name) => invoke('exportx:set-timeline', name),
+  // the sizes Resolve offers for a format/codec (Settings › Deliverables)
+  resolutions: (q) => invoke('exportx:resolutions', q),
   // batch
   plan: (request) => invoke('exportx:plan', request),
   queue: (request) => invoke('exportx:queue', request),

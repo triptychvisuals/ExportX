@@ -7,7 +7,7 @@ ExportX ships in two forms that share the same deliverable profiles:
 | **Workflow Integration plugin** (the panel with buttons) | DaVinci Resolve **Studio** 18 or newer | Workspace › Workflow Integrations › ExportX |
 | **Python script / CLI** | Resolve free or Studio (in-app); Studio for external/terminal use | Workspace › Scripts, or your terminal |
 
-Blackmagic only exposes the Workflow Integration plugin host and external scripting in Studio. The free edition can still run the Python script from the Scripts menu.
+Blackmagic only exposes the Workflow Integration plugin host and external scripting in Studio. The free edition can still run the Python script from the Scripts menu. Exporting only the In to Out of a timeline needs **Resolve 19 or newer** (`Timeline.GetMarkInOut` arrived there); older versions export whole timelines and the range row says so.
 
 ## 1. Workflow Integration plugin
 
@@ -90,5 +90,6 @@ python3 python/exportx_batch.py --all --out "/Volumes/Deliver/Job123" --wait
 - **"Initialize() failed"**: the plugin was launched outside Resolve, or by a Resolve that does not support Workflow Integrations.
 - **"Resolve refused the render setting X"**: Resolve's Deliver page would not take that value for the deliverable's format and codec. The message says which key and what to change (the folder, the name pattern, the marks, or the size). Settings that are only extras (a quality level, an audio bit depth, an encoding profile) never stop a job: Resolve's own default is used instead and the log under Settings › Advanced says so.
 - **Unknown codec / format**: click **List formats & codecs** in the panel (or run the Python script with `--list`) and use one of the printed ids in your profile. Ids differ between Resolve versions and OSes (for example, ProRes encoding on Windows/Linux needs Resolve 19.1 or later).
+- **The final is shorter than the timeline, or marks are missing from the batch**: an In and Out are set in Resolve and the batch keeps to them; the row under the mark lists reads `In to Out …`. Clear the points in Resolve (Alt+X) or switch *only In to Out* off.
 - **Jobs queue but nothing renders**: Resolve refuses `StartRendering` while another render is in progress. Stop it in the Deliver page and try again.
 - **Running the UI outside Resolve** (for development): `npm install` once, then `EXPORTX_MOCK=1 npx electron .` uses the mock Resolve from `test/helpers/mock-resolve.js`.

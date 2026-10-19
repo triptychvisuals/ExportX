@@ -13,7 +13,8 @@
 const path = require('path');
 const { renderName, DEFAULT_TEMPLATE, defaultLabel } = require('./naming');
 const { ResolveError } = require('./resolve');
-const { tcForFilename, pad } = require('./timecode');
+const { tcForFilename, pad, framesToTc } = require('./timecode');
+const { estimateBytes } = require('./estimate');
 
 const TERMINAL = new Set(['complete', 'failed', 'cancelled']);
 const TARGETS = ['timeline', 'cuts', 'stills'];
@@ -52,10 +53,42 @@ function targetDirFor(targetDir, profile) {
 }
 
 /**
+ * The In/Out range applied to the marks: a cut or still outside it is left out,
+ * a cut that runs past the Out point stops there.
+ */
+function marksWithin(marks, range) {
+  if (!range) return { kept: marks, skipped: [] };
+  const kept = [];
+  const skipped = [];
+  for (const m of marks) {
+    if (m.absIn < range.absIn || m.absIn > range.absOut) {
+      skipped.push(m);
+      continue;
+    }
+    if (m.absOut > range.absOut) {
+      const absOut = range.absOut;
+      kept.push({ ...m, absOut, durationFrames: absOut - m.absIn + 1, clipped: true });
+    } else kept.push(m);
+  }
+  return { kept, skipped };
+}
+
+/** What a job will weigh, from the deliverable's settings and the timeline's facts; null when nothing is known. */
+function estimateFor(profile, timeline, frames, kind) {
+  if (!timeline || !frames) return null;
+  const width = profile.resolution ? profile.resolution.width : timeline.width;
+  const height = profile.resolution ? profile.resolution.height : timeline.height;
+  return estimateBytes({ format: profile.format, codec: profile.codec, settings: profile.settings, width, height, fps: profile.frameRate || timeline.fps, frames, kind });
+}
+
+/**
  * Pure expansion of one timeline into job items. No Resolve calls.
+ * `timeline` is the timeline's facts (fps, frames, width, height) for durations
+ * and size estimates; `range` is the In/Out range ({ absIn, absOut }) the final
+ * renders and the marks are kept within, or null for the whole timeline.
  * @returns {{items: Array, notes: Array}} notes are soft problems (e.g. a cuts profile with no cuts marked)
  */
-function expandItems({ profiles = [], targets = TARGETS, timelineName, projectName, marks = [], template, targetDir = '', now = new Date(), nameOptions = {} }) {
+function expandItems({ profiles = [], targets = TARGETS, timelineName, projectName, marks = [], template, targetDir = '', now = new Date(), nameOptions = {}, timeline = null, range = null }) {
   const items = [];
   const notes = [];
   const base = {
@@ -63,6 +96,12 @@ function expandItems({ profiles = [], targets = TARGETS, timelineName, projectNa
     timeline: timelineName,
     now,
   };
+  const within = marksWithin(marks, range);
+  for (const kind of ['cut', 'still']) {
+    const n = within.skipped.filter((m) => m.kind === kind).length;
+    if (n) notes.push({ timeline: timelineName, profileId: null, profileName: null, message: `${n} ${kind}${n === 1 ? '' : 's'} outside In/Out on "${timelineName}" left out` });
+  }
+  const finalFrames = range ? range.frames || range.absOut - range.absIn + 1 : timeline ? timeline.frames : 0;
   for (const profile of profiles) {
     const target = profileTarget(profile);
     if (!targets.includes(target)) continue;
@@ -81,12 +120,19 @@ function expandItems({ profiles = [], targets = TARGETS, timelineName, projectNa
 
     if (target === 'timeline') {
       const fileName = renderName(template || DEFAULT_TEMPLATE, ctx, nameOptions) + (profile.fileSuffix || '');
-      items.push({ ...common, fileName, range: null, mark: null });
+      items.push({
+        ...common,
+        fileName,
+        range: range ? { markIn: range.absIn, markOut: range.absOut } : null,
+        mark: null,
+        durationFrames: finalFrames || null,
+        estimate: estimateFor(profile, timeline, finalFrames, 'final'),
+      });
       continue;
     }
 
     const kind = target === 'cuts' ? 'cut' : 'still';
-    const list = marks.filter((m) => m.kind === kind);
+    const list = within.kept.filter((m) => m.kind === kind);
     if (!list.length) {
       notes.push({ timeline: timelineName, profileId: profile.id, profileName: profile.name, message: `No ${kind}s marked on "${timelineName}"` });
       continue;
@@ -97,11 +143,14 @@ function expandItems({ profiles = [], targets = TARGETS, timelineName, projectNa
       const fileName =
         renderName(tpl, { ...ctx, cut: n, still: n, n, tc: tcForFilename(mark.tcIn), tcout: tcForFilename(mark.tcOut), in: mark.absIn, out: mark.absOut }, nameOptions) +
         (profile.fileSuffix || '');
+      const frames = kind === 'still' ? 1 : mark.durationFrames;
       items.push({
         ...common,
         fileName,
         range: { markIn: mark.absIn, markOut: mark.absOut },
-        mark: { index: mark.index, kind: mark.kind, tcIn: mark.tcIn, tcOut: mark.tcOut, duration: mark.duration, durationFrames: mark.durationFrames },
+        mark: { index: mark.index, kind: mark.kind, tcIn: mark.tcIn, tcOut: mark.clipped && timeline ? framesToTc(mark.absOut, timeline.fps, timeline.dropFrame) : mark.tcOut, duration: mark.duration, durationFrames: mark.durationFrames, clipped: Boolean(mark.clipped) },
+        durationFrames: frames,
+        estimate: estimateFor(profile, timeline, frames, kind),
       });
     }
   }
@@ -136,31 +185,36 @@ class BatchExporter {
     return { current, targets: [current] };
   }
 
-  async _expandTimeline({ profiles, targets, timelineName, projectName, nameTemplate, targetDir, nameOptions }) {
+  async _expandTimeline({ profiles, targets, timelineName, projectName, nameTemplate, targetDir, nameOptions, useInOut = true }) {
     const wantsMarks = profiles.some((p) => {
       const t = profileTarget(p);
       return targets.includes(t) && t !== 'timeline';
     });
     const marks = wantsMarks ? (await this.bridge.marksForTimeline(timelineName)).marks : [];
-    return expandItems({ profiles, targets, timelineName, projectName, marks, template: nameTemplate, targetDir, now: this.now(), nameOptions: { ...this.nameOptions, ...(nameOptions || {}) } });
+    const timeline = await this.bridge.timelineInfoByName(timelineName);
+    const range = useInOut && timeline.inOut ? timeline.inOut : null;
+    const r = expandItems({ profiles, targets, timelineName, projectName, marks, template: nameTemplate, targetDir, now: this.now(), nameOptions: { ...this.nameOptions, ...(nameOptions || {}) }, timeline, range });
+    return { ...r, timeline: { ...timeline, range } };
   }
 
   /** Dry run: what would be queued, without touching Resolve's render settings. */
-  async plan({ profiles = [], targets = TARGETS, targetDir = '', nameTemplate, timelines, nameOptions } = {}) {
+  async plan({ profiles = [], targets = TARGETS, targetDir = '', nameTemplate, timelines, nameOptions, useInOut = true } = {}) {
     const projectName = await this.bridge.projectName();
     const { targets: timelineNames } = await this._timelineTargets(timelines);
     const items = [];
     const notes = [];
+    const facts = {};
     for (const timelineName of timelineNames) {
-      const r = await this._expandTimeline({ profiles, targets, timelineName, projectName, nameTemplate, targetDir, nameOptions });
+      const r = await this._expandTimeline({ profiles, targets, timelineName, projectName, nameTemplate, targetDir, nameOptions, useInOut });
       items.push(...r.items.map(({ profile, ...rest }) => rest));
       notes.push(...r.notes);
+      facts[timelineName] = r.timeline;
     }
-    return { items, notes };
+    return { items, notes, timelines: facts };
   }
 
   /** Add render jobs. Returns { jobs, errors, notes, warnings } (warnings: settings Resolve refused and the job renders without). */
-  async queue({ profiles = [], targets = TARGETS, targetDir = '', nameTemplate, timelines, clearExisting = false, nameOptions } = {}) {
+  async queue({ profiles = [], targets = TARGETS, targetDir = '', nameTemplate, timelines, clearExisting = false, nameOptions, useInOut = true } = {}) {
     if (!profiles.length) throw new ResolveError('Pick at least one deliverable profile.');
     if (!targetDir) throw new ResolveError('Pick an output folder.');
 
@@ -182,7 +236,7 @@ class BatchExporter {
     let active = current;
     try {
       for (const timelineName of timelineNames) {
-        const expanded = await this._expandTimeline({ profiles, targets, timelineName, projectName, nameTemplate, targetDir, nameOptions });
+        const expanded = await this._expandTimeline({ profiles, targets, timelineName, projectName, nameTemplate, targetDir, nameOptions, useInOut });
         notes.push(...expanded.notes);
         for (const note of expanded.notes) this.log(`${note.profileName}: ${note.message}`);
         if (!expanded.items.length) continue;

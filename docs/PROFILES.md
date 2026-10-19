@@ -8,7 +8,7 @@ A profile is one deliverable: what it applies to, container, codec, optional res
 | `cuts` | **cut mark** × timeline, rendered as a `MarkIn`/`MarkOut` range | social cuts, teasers |
 | `stills` | **still mark** × timeline, rendered as a single frame | frame grabs, thumbnails, posters |
 
-Cuts and stills are marked with the pad in the panel (hold = cut, tap = still) or with the Python CLI, and live as Resolve timeline markers (`customData` `exportx:cut` / `exportx:still`).
+Cuts and stills are marked with the keys in the panel (hold C = cut, press S = still) or with the Python CLI, and live as Resolve timeline markers (`customData` `exportx:cut` / `exportx:still`).
 
 Profiles are JSON files read from, in order (later wins by `id`):
 
@@ -17,7 +17,7 @@ Profiles are JSON files read from, in order (later wins by `id`):
 
 A file may contain a single profile object, an array of them, or `{ "profiles": [ ... ] }`.
 
-**You rarely need to touch these files.** The panel's **Settings** tab edits deliverables in place: name, the label used in file names, what it applies to, format and codec (lists read live from your Resolve), size, quality, a Deliver preset to start from, folder, audio, and whether it is ticked by default. Saving writes `~/.exportx/profiles/<id>.json`; "Reset to default" removes that file so the bundled version comes back. The JSON is for sharing, versioning, or the few settings the form does not expose.
+**You rarely need to touch these files.** The panel's **Settings** tab edits deliverables in place: name, the label used in file names, what it applies to, format and codec (lists read live from your Resolve), size (the sizes Resolve offers for that codec, from `GetRenderResolutions`, the timeline's own, or a custom pair), quality or bit rate, a Deliver preset to start from, folder, audio, whether it is ticked by default, and under *More settings* every other key in the table below (frame rate, render mode, encoding profile, audio codec, bit depth, sample rate, colour space and gamma tags, pixel aspect, alpha, numbering, multi-pass, fast start), with a live file-size estimate for the current timeline. Saving writes `~/.exportx/profiles/<id>.json`; "Reset to default" removes that file so the bundled version comes back. The JSON is for sharing, versioning, or the few settings the form does not expose.
 
 ## Schema
 
@@ -59,13 +59,31 @@ For each job ExportX calls, in order:
 4. `SetRenderSettings({ …settings, TargetDir, CustomName, FormatWidth/FormatHeight, FrameRate, SelectAllFrames | MarkIn/MarkOut })`
 5. `AddRenderJob()`
 
-Anything in `settings` wins over the preset. `TargetDir`, `CustomName`, `SelectAllFrames`, `MarkIn` and `MarkOut` are always supplied by ExportX, so do not put them in `settings`. Still profiles always get `ExportAudio: false`.
+Anything in `settings` wins over the preset. `TargetDir`, `CustomName`, `SelectAllFrames`, `MarkIn` and `MarkOut` are always supplied by ExportX, so do not put them in `settings`. Still profiles always get `ExportAudio: false`. A timeline target renders `SelectAllFrames`, or `MarkIn`/`MarkOut` of the In/Out range when the selected timeline has one set (next section).
 
 Because every job goes through `SetRenderSettings` and `AddRenderJob`, the files are made by Resolve's own render engine with whatever encoders your machine has. The API does not expose every advanced Deliver option; when you need one, save a Deliver preset in Resolve and point the deliverable at it with `renderPreset` (or "Start from Deliver preset" in Settings).
 
+## The In/Out range
+
+When the timeline you export has an In and Out set in Resolve (I and O on the Edit or Color page), the batch keeps to them: the final renders `MarkIn`/`MarkOut` of that range instead of the whole timeline, a cut or still whose in point lies outside the range is left out (the plan says `2 cuts outside In/Out on "Main Edit" left out`), a cut that runs past Out ends at Out, and the preview proxy covers the same range. The row under the mark lists shows the range; the `only In to Out` switch there (the `useInOut` setting, `--whole-timeline` or `EXPORTX_WHOLE=1` for the Python edition) turns it off for a batch that needs whole timelines. With no In and Out, or on Resolve versions before 19 (which have no `Timeline.GetMarkInOut`), the whole timeline is exported.
+
+## File-size estimates
+
+Every planned file, the Settings form and the summary show an estimate of what the file will weigh, computed from the deliverable's settings and the length of what is being exported (`src/estimate.js`, mirrored in Python):
+
+| Deliverable | How it is counted | Marked as |
+| --- | --- | --- |
+| a video with a bit rate (`VideoQuality` in kb/s, what H.264/H.265 take) | bit rate × seconds | exact (`1.1 GB`) with Linear PCM audio, `≈` with AAC |
+| a fixed-rate codec (ProRes, DNxHR, CineForm, uncompressed) | the codec's published rate as bits per pixel per frame × pixels × frames | `≈` |
+| a long-GOP codec on automatic quality (H.264, H.265, AV1, VP9) | a typical automatic rate for the codec, same arithmetic; `Least` to `Best` scale it | `≈` |
+| a still | bytes per pixel for the image format and bit depth (TIFF, DPX, BMP are exact; PNG, JPEG, EXR typical) | exact or `≈` |
+| audio | Linear PCM is channels × bit depth × sample rate; AAC and MP3 take Resolve's default 320 kb/s | |
+
+Sizes include one percent of container overhead and use the deliverable's resolution, else the timeline's. They are planning figures: a bit-rate encode lands close, a ProRes figure can be off by a third depending on the picture.
+
 ## Stills
 
-A still is a render job whose in and out point are the same frame, so it goes through the same Deliver engine, colour management and sizing as everything else. Use an image format (`tif`, `png`, `jpg`, `dpx`, `exr`) with `"codec": "auto"` or a specific codec id from the format list. Resolve appends the frame number to image-sequence filenames (for example `SpotA_Main Edit_still01_0086412.tif`); the number is the absolute timeline frame, which is also handy for finding the frame again.
+A still is a render job whose in and out point are the same frame, so it goes through the same Deliver engine, colour management and sizing as everything else. Use an image format (`tif`, `png`, `jpg`, `dpx`, `exr`) with `"codec": "auto"` or a specific codec id from the format list. Resolve appends the frame number to image-sequence filenames (for example `SpotA_Main Edit_still01_0086412.tif`); the number is the absolute timeline frame, which is also handy for finding the frame again. The frame is rendered at the deliverable's size or the timeline's full resolution, through the same colour management as the master, so it is the best Resolve can produce for that frame. The bundled TIFF and PNG stills are 16-bit RGB, the JPEG is at Resolve's `Best` level, and the EXR is half float; pick another codec id from the format list (`RGB 8 bits`, `RGB 10 bits` for DPX, `RGB float (PIZ)` for EXR) to change the bit depth.
 
 ## Useful `settings` keys
 
@@ -73,13 +91,13 @@ These are the keys `Project.SetRenderSettings()` accepts (from Blackmagic's scri
 
 | Key | Type | Notes |
 | --- | --- | --- |
-| `SelectAllFrames` | bool | Set by ExportX (`true` for timeline targets, `false` for cuts and stills). |
-| `MarkIn`, `MarkOut` | int | Absolute timeline frames; set by ExportX from the mark. |
+| `SelectAllFrames` | bool | Set by ExportX (`true` for timeline targets without an In/Out range, `false` for cuts, stills and a final kept to In/Out). |
+| `MarkIn`, `MarkOut` | int | Absolute timeline frames; set by ExportX from the mark or the In/Out range. |
 | `TargetDir` | string | Set by ExportX. |
 | `CustomName` | string | Set by ExportX. |
 | `UniqueFilenameStyle` | int | `0` prefix, `1` suffix. Useful with `"renderMode": "individual"`. |
 | `ExportVideo`, `ExportAudio` | bool | |
-| `FormatWidth`, `FormatHeight` | int | Set from `resolution`. |
+| `FormatWidth`, `FormatHeight` | int | Set from `resolution`; Settings lists the sizes `GetRenderResolutions(format, codec)` offers. |
 | `FrameRate` | number | Set from `frameRate`. |
 | `PixelAspectRatio` | string | `"square"` or `"cinemascope"`. |
 | `VideoQuality` | int or string | `0` automatic; `1…` bit rate in kb/s (what H.264 and H.265 take: the bundled profiles use 45000 for the 4K final, 16000 for 1080p, 12000 for social cuts, 6000 for the proxy); or `"Least"`, `"Low"`, `"Medium"`, `"High"`, `"Best"` for the few codecs with quality levels (Photo JPEG and the like). A level on H.264/H.265 is refused by Resolve and dropped with a note. |
@@ -134,8 +152,10 @@ Characters that are illegal in filenames become `_`, and Resolve adds the extens
 | `final-1080-h264` | Web 1080p | Web | timeline | MP4 H.264 1920×1080 | on |
 | `cuts-social-1080` | Social cuts | Social | cuts | MP4 H.264 1920×1080 per cut | on |
 | `cuts-social-vertical` | Social cuts 9:16 | Social9x16 | cuts | MP4 H.264 1080×1920 per cut | off |
-| `stills-tiff` | Stills TIFF | Still | stills | TIFF per still | on |
-| `stills-jpeg` | Stills JPEG | Still | stills | JPEG per still | off |
+| `stills-tiff` | Stills TIFF | Still | stills | TIFF 16-bit RGB per still | on |
+| `stills-jpeg` | Stills JPEG | Still | stills | JPEG (Best) per still | off |
+| `stills-png` | Stills PNG 16-bit | Still | stills | PNG 16-bit RGB per still | off |
+| `stills-exr` | Stills EXR (half float) | Still | stills | OpenEXR half float (PIZ) per still | off |
 | `review-proxy` | Review proxy 720p | Review | timeline | MP4 H.264 1280×720 | off |
 | `clips-prores` | Individual clips | Clip | timeline | ProRes 422, one file per clip | off |
 
@@ -171,16 +191,16 @@ Square cuts for a feed, reusing a Deliver preset you already maintain:
 }
 ```
 
-16-bit PNG stills for a poster designer:
+10-bit DPX stills for a VFX vendor:
 
 ```json
 {
-  "id": "stills-png16",
-  "name": "Stills PNG 16-bit",
+  "id": "stills-dpx10",
+  "name": "Stills DPX 10-bit",
   "label": "Still",
   "target": "stills",
-  "format": "png",
-  "codec": "RGB 16 bits",
-  "subfolder": "06_Stills/PNG"
+  "format": "dpx",
+  "codec": "RGB 10 bits",
+  "subfolder": "06_Stills/DPX"
 }
 ```

@@ -49,6 +49,10 @@ Timeline
   GetSetting(name) SetSetting(name, value)             "timelineFrameRate", "timelineDropFrameTimecode", ...
   GetCurrentTimecode() -> "HH:MM:SS:FF" (";" before FF when drop-frame)
   SetCurrentTimecode(tc) -> bool
+  --- In and Out (Resolve 19+) ---
+  GetMarkInOut() -> {video: {in, out}, audio: {in, out}}   frames relative to the timeline start; a key is missing when nothing is set
+  SetMarkInOut(in, out, type="all") -> bool
+  ClearMarkInOut(type="all") -> bool
   --- markers ---
   GetMarkers() -> {frameId: {color, duration, note, name, customData}}   frameId is relative to the timeline start
   AddMarker(frameId, color, name, note, duration, customData) -> bool   fails if a marker already sits on frameId
@@ -73,7 +77,9 @@ Marker colours: Blue, Cyan, Green, Yellow, Red, Pink, Purple, Fuchsia, Rose, Lav
 - `isInteractiveMode=true` shows Resolve's render progress UI and prompts; ExportX uses `false` and polls `GetRenderJobStatus` itself.
 - `FormatWidth`/`FormatHeight` change the output size; how a mismatched aspect ratio is handled follows the project's image scaling settings.
 - There is no play/pause call in the scripting API, and no way to read viewer frames. ExportX polls `GetCurrentTimecode()` to show Resolve's playhead, and for an in-panel picture it renders a small proxy of the timeline through the same render queue and plays that file.
-- `timelineResolutionWidth` / `timelineResolutionHeight` (via `Timeline.GetSetting`) give the aspect ratio for the preview proxy.
+- `timelineResolutionWidth` / `timelineResolutionHeight` (via `Timeline.GetSetting`) give the timeline's size: the aspect ratio for the preview proxy (a 9:16 timeline gets a 720×1280 proxy and a vertical viewer) and the pixel count for size estimates.
+- `GetMarkInOut()` frames are relative like marker ids; `ResolveBridge.timelineInOut` makes them absolute and treats a range covering the whole timeline as none. Versions before 19 have no call for the points, so ExportX exports whole timelines there.
+- `GetRenderResolutions(formatId, codecId)` lists the sizes the Deliver page offers for that codec (`[{Width, Height}]`); the Settings form's Size list comes from it. Without arguments it lists the current format and codec's.
 - Codec and format ids differ by OS and Resolve version. Match loosely and offer the user the list (`capabilities()` in `src/resolve.js`).
 
 ## Workflow Integration plugin host

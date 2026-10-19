@@ -47,6 +47,8 @@ const DEFAULT_SETTINGS = {
   startRender: true,
   keyCut: 'c',
   keyStill: 's',
+  // Export only between the timeline's In and Out points when they are set (I and O in Resolve).
+  useInOut: true,
   // Triptych Studios portal (optional). The key is stored encrypted when the OS keychain is available.
   portalUrl: '',
   portalToken: '',
@@ -704,6 +706,31 @@ handle('exportx:seek', async (absFrame) => {
   return requireBridge().seek(Number(absFrame), info);
 });
 
+/** Make another timeline of the project the one the panel marks, previews and exports. */
+handle('exportx:set-timeline', async (name) => {
+  const bridge = requireBridge();
+  const wanted = String(name || '').trim();
+  if (!wanted) throw new Error('Pick a timeline');
+  await bridge.setCurrentTimeline(wanted);
+  state.playhead.info = null;
+  state.playhead.last = null;
+  state.playhead.marksKey = null;
+  state.press = null;
+  const info = await currentInfo(true);
+  log(`Switched to timeline "${info.name}"`);
+  const result = await bridge.marks();
+  broadcastMarks(result);
+  return info;
+});
+
+/** The sizes Resolve offers for a format and codec, for the Settings form. */
+handle('exportx:resolutions', async (q) => {
+  const bridge = requireBridge();
+  const format = q && q.format ? await bridge.resolveFormat(q.format) : null;
+  const codec = format && q.codec && !/^(auto|\*|first|default)$/i.test(q.codec) ? await bridge.resolveCodec(format.id, q.codec) : null;
+  return bridge.renderResolutions(format ? format.id : undefined, codec ? codec.id : undefined);
+});
+
 // ---------------------------------------------------------------- IPC: preview video
 
 function previewKey(project, timeline) {
@@ -739,23 +766,37 @@ async function previewStatus() {
   const info = await currentInfo();
   const key = previewKey(project, info.name);
   const meta = readPreviewMeta(key);
-  const stale = Boolean(meta && (meta.startFrame !== info.startFrame || meta.endFrame !== info.endFrame || Math.abs(meta.fps - info.fps) > 0.001));
+  // The preview covers the In/Out range when one is set, so its frames are the range's, not the timeline's.
+  const range = previewRange(info);
+  const stale = Boolean(meta && (meta.startFrame !== range.startFrame || meta.endFrame !== range.endFrame || Math.abs(meta.fps - info.fps) > 0.001));
   return {
     key,
     project,
     timeline: info.name,
     fps: info.fps,
-    startFrame: info.startFrame,
-    endFrame: info.endFrame,
+    startFrame: meta ? meta.startFrame : range.startFrame,
+    endFrame: meta ? meta.endFrame : range.endFrame,
+    timelineStart: info.startFrame,
+    timelineEnd: info.endFrame,
+    inOut: info.inOut,
+    ranged: Boolean(range.ranged),
     dropFrame: info.dropFrame,
+    width: meta ? meta.width : null,
+    height: meta ? meta.height : null,
+    vertical: Boolean(info.vertical),
     ready: Boolean(meta),
     stale,
     file: meta ? pathToFileURL(meta.file).href : null,
     renderedAt: meta ? meta.renderedAt : null,
-    width: meta ? meta.width : null,
-    height: meta ? meta.height : null,
     rendering: state.preview.rendering && state.preview.key === key ? state.preview.percent : null,
   };
+}
+
+/** The frames the preview covers: the In/Out range when one is set and wanted, else the whole timeline. */
+function previewRange(info) {
+  const useInOut = readSettings().useInOut !== false;
+  if (useInOut && info.inOut) return { startFrame: info.inOut.absIn, endFrame: info.inOut.absOut, ranged: true };
+  return { startFrame: info.startFrame, endFrame: info.endFrame, ranged: false };
 }
 
 handle('exportx:preview-status', async () => previewStatus());
@@ -777,20 +818,22 @@ handle('exportx:preview-render', async () => {
       /* ignore */
     }
   }
-  const tl = await bridge.currentTimeline();
-  const tlW = Number(await tl.GetSetting('timelineResolutionWidth')) || 1920;
-  const tlH = Number(await tl.GetSetting('timelineResolutionHeight')) || 1080;
-  const width = 1280;
-  const height = Math.max(2, Math.round((width * tlH) / tlW / 2) * 2);
+  const tlW = info.width || 1920;
+  const tlH = info.height || 1080;
+  // The long side is 1280: a 16:9 timeline previews at 1280×720, a 9:16 one at 720×1280.
+  const even = (n) => Math.max(2, Math.round(n / 2) * 2);
+  const width = tlH > tlW ? even((1280 * tlW) / tlH) : 1280;
+  const height = tlH > tlW ? 1280 : even((1280 * tlH) / tlW);
+  const range = previewRange(info);
   const profile = { ...PREVIEW_PROFILE, resolution: { width, height } };
   // lenient: a preview at the timeline's own size is still a preview
-  const applied = await bridge.applyProfile(profile, { targetDir: PREVIEW_DIR, customName: key, lenient: true });
+  const applied = await bridge.applyProfile(profile, { targetDir: PREVIEW_DIR, customName: key, lenient: true, range: range.ranged ? { markIn: range.startFrame, markOut: range.endFrame } : null });
   if (applied.rejected.length) log(`Preview: Resolve did not take ${applied.rejected.map((r) => r.key).join(', ')} for mp4/H264; rendering without`);
   const jobId = await bridge.addRenderJob();
   const ok = await bridge.startRendering([jobId]);
   if (!ok) throw new Error('Resolve refused to start the preview render');
   state.preview = { rendering: true, jobId, key, percent: 0 };
-  log(`Rendering preview of "${info.name}" (${width}×${height} H.264) → ${PREVIEW_DIR}`);
+  log(`Rendering preview of "${info.name}" (${width}×${height} H.264${range.ranged ? `, In to Out ${info.inOut.tcIn} → ${info.inOut.tcOut}` : ''}) → ${PREVIEW_DIR}`);
   send('exportx:preview', { key, rendering: true, percent: 0 });
   exporter
     .waitForCompletion([jobId], {
@@ -813,7 +856,7 @@ handle('exportx:preview-render', async () => {
         send('exportx:preview', { key, rendering: false, error: `Preview rendered but no file was found in ${PREVIEW_DIR}` });
         return;
       }
-      const meta = { file, project, timeline: info.name, startFrame: info.startFrame, endFrame: info.endFrame, fps: info.fps, dropFrame: info.dropFrame, width, height, renderedAt: new Date().toISOString() };
+      const meta = { file, project, timeline: info.name, startFrame: range.startFrame, endFrame: range.endFrame, ranged: range.ranged, timelineStart: info.startFrame, timelineEnd: info.endFrame, fps: info.fps, dropFrame: info.dropFrame, width, height, renderedAt: new Date().toISOString() };
       fs.writeFileSync(previewMetaPath(key), JSON.stringify(meta, null, 2));
       try {
         await bridge.deleteRenderJob(jobId);
@@ -852,6 +895,7 @@ function toRequest(req) {
     nameOptions: nameOptions(),
     timelines: Array.isArray(r.timelines) && r.timelines.length ? r.timelines : null,
     clearExisting: Boolean(r.clearExisting),
+    useInOut: r.useInOut === undefined ? readSettings().useInOut !== false : Boolean(r.useInOut),
   };
 }
 
@@ -887,6 +931,7 @@ handle('exportx:queue', async (req) => {
     selectedProfiles: request.profiles.map((p) => p.id),
     clearExisting: request.clearExisting,
     startRender: Boolean(req && req.startRender),
+    useInOut: request.useInOut,
     ...(req && typeof req.upload === 'boolean' ? { portalAuto: req.upload } : {}),
     ...(portalProjectId && project ? { portalProjectByResolve: { ...(readSettings().portalProjectByResolve || {}), [project]: portalProjectId } } : {}),
   });

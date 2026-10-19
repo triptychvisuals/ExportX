@@ -262,7 +262,54 @@ class ResolveBridge {
     } catch (_err) {
       dropFrame = false;
     }
-    return { name, startFrame, endFrame, fps, dropFrame, frames: endFrame - startFrame + 1 };
+    let width = 0;
+    let height = 0;
+    try {
+      width = Number(await timeline.GetSetting('timelineResolutionWidth')) || 0;
+      height = Number(await timeline.GetSetting('timelineResolutionHeight')) || 0;
+    } catch (_err) {
+      width = 0;
+      height = 0;
+    }
+    const inOut = await this.timelineInOut(timeline, { startFrame, endFrame, fps, dropFrame });
+    return { name, startFrame, endFrame, fps, dropFrame, frames: endFrame - startFrame + 1, width, height, vertical: height > width, inOut };
+  }
+
+  /** timelineInfo for a timeline named in the project, without switching to it. */
+  async timelineInfoByName(name) {
+    return this.timelineInfo(await this.timelineByName(name));
+  }
+
+  /**
+   * The In and Out points set on the timeline (I and O in Resolve), as absolute
+   * frames, or null when none is set or the whole timeline is between them.
+   * Resolve 19 exposes them (Timeline.GetMarkInOut); older versions have no way
+   * to read them, so they answer null and the whole timeline is the range.
+   * Resolve reports them like marker frames, relative to the timeline start.
+   */
+  async timelineInOut(timeline, { startFrame, endFrame, fps, dropFrame }) {
+    if (typeof timeline.GetMarkInOut !== 'function') return null;
+    let raw;
+    try {
+      raw = await timeline.GetMarkInOut();
+    } catch (_err) {
+      return null;
+    }
+    const pick = raw && typeof raw === 'object' ? raw.video || raw.audio : null;
+    if (!pick || pick.in === undefined || pick.in === null || pick.out === undefined || pick.out === null) return null;
+    let absIn = Number(pick.in);
+    let absOut = Number(pick.out);
+    if (!Number.isFinite(absIn) || !Number.isFinite(absOut)) return null;
+    // Relative to the timeline start (what Resolve does) unless the numbers only make sense as absolute frames.
+    if (absOut <= endFrame - startFrame || absIn < startFrame) {
+      absIn += startFrame;
+      absOut += startFrame;
+    }
+    if (absOut < absIn) [absIn, absOut] = [absOut, absIn];
+    absIn = Math.min(endFrame, Math.max(startFrame, Math.round(absIn)));
+    absOut = Math.min(endFrame, Math.max(startFrame, Math.round(absOut)));
+    if (absIn === startFrame && absOut === endFrame) return null;
+    return { absIn, absOut, frames: absOut - absIn + 1, tcIn: framesToTc(absIn, fps, dropFrame), tcOut: framesToTc(absOut, fps, dropFrame) };
   }
 
   async playhead(info) {
@@ -348,6 +395,21 @@ class ResolveBridge {
   }
 
   /** Full format/codec catalogue, handy for writing profiles. */
+  /** The sizes Resolve offers for a format and codec (its Deliver page's resolution list), or [] when it cannot say. */
+  async renderResolutions(format, codec) {
+    const project = await this.project();
+    if (typeof project.GetRenderResolutions !== 'function') return [];
+    let list;
+    try {
+      list = await project.GetRenderResolutions(format, codec);
+    } catch (_err) {
+      return [];
+    }
+    return (Array.isArray(list) ? list : [])
+      .map((r) => ({ width: Number(r.Width !== undefined ? r.Width : r.width), height: Number(r.Height !== undefined ? r.Height : r.height) }))
+      .filter((r) => r.width > 0 && r.height > 0);
+  }
+
   async capabilities() {
     const formats = await this.renderFormats();
     const out = [];

@@ -55,10 +55,27 @@ class MockTimeline {
     this.markers = {};
     for (const [k, v] of Object.entries(o.markers || {})) this.markers[k] = { color: 'Blue', duration: 1, note: '', name: '', customData: '', ...v };
     this.playheadAbs = o.playheadAbs != null ? o.playheadAbs : this.startFrame;
+    this.width = o.width || 1920;
+    this.height = o.height || 1080;
+    // In and Out points (I and O in Resolve), relative frames like Resolve 19 reports them; null = none set
+    this.inOut = o.inOut || null;
     this.calls = [];
   }
   GetName() {
     return this.name;
+  }
+  GetMarkInOut() {
+    if (!this.inOut) return {};
+    return { video: { in: this.inOut.in, out: this.inOut.out }, audio: { in: this.inOut.in, out: this.inOut.out } };
+  }
+  SetMarkInOut(relIn, relOut) {
+    this.calls.push(['SetMarkInOut', relIn, relOut]);
+    this.inOut = { in: relIn, out: relOut };
+    return true;
+  }
+  ClearMarkInOut() {
+    this.inOut = null;
+    return true;
   }
   GetStartFrame() {
     return this.startFrame;
@@ -72,6 +89,8 @@ class MockTimeline {
   GetSetting(name) {
     if (name === 'timelineFrameRate') return String(this.fps);
     if (name === 'timelineDropFrameTimecode') return '0';
+    if (name === 'timelineResolutionWidth') return String(this.width);
+    if (name === 'timelineResolutionHeight') return String(this.height);
     return '';
   }
   GetCurrentTimecode() {
@@ -179,6 +198,17 @@ class MockProject {
   }
   GetRenderCodecs(format) {
     return { ...(this.codecs[format] || {}) };
+  }
+  GetRenderResolutions(format, codec) {
+    this._record('GetRenderResolutions', [format, codec]);
+    if (format && !Object.values(this.formats).includes(format)) return [];
+    return [
+      { Width: 3840, Height: 2160 },
+      { Width: 1920, Height: 1080 },
+      { Width: 1280, Height: 720 },
+      { Width: 1080, Height: 1920 },
+      { Width: 1080, Height: 1080 },
+    ];
   }
   GetCurrentRenderFormatAndCodec() {
     return { format: this.currentFormat, codec: this.currentCodec };

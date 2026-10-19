@@ -36,6 +36,7 @@ Environment variables honoured in both modes:
    EXPORTX_PROFILE_DIRS  os.pathsep-separated extra profile directories
    EXPORTX_TEMPLATE      filename template (default {timeline}_{profile})
    EXPORTX_RENDER        "1" to start rendering after queuing
+   EXPORTX_WHOLE         "1" to ignore the In and Out set in Resolve and export whole timelines
    EXPORTX_HOME          overrides ~/.exportx
    EXPORTX_PORTAL_URL    Triptych Studios portal URL for --upload (see portal-kit/)
    EXPORTX_PORTAL_TOKEN  the plugin key from the portal (Settings > ExportX) for --upload
@@ -66,6 +67,7 @@ CONFIG = {
     "render": True,
     "wait": True,
     "clear_queue": False,
+    "whole_timeline": False,          # True: ignore the In and Out set in Resolve and export each timeline whole
 }
 
 DEFAULT_TEMPLATE = "{yymmdd}_{project}_{label}"
@@ -370,9 +372,150 @@ def build_render_settings(profile: dict, target_dir: str, custom_name: str, rng:
     return s
 
 
-def expand_items(profiles, targets, timeline_name, project_name, marks, template, out_dir, now=None, underscore_spaces=False):
-    """Pure expansion of one timeline into job items; mirrors src/batch.js expandItems()."""
+# ----------------------------------------------------------------- size estimates (mirrors src/estimate.js)
+
+FIXED_BPP = [(r"prores.*4444.*xq", 8.05, "ProRes 4444 XQ"), (r"prores.*4444", 5.31, "ProRes 4444"),
+             (r"prores.*422.*hq|proreshq|prores_hq", 3.54, "ProRes 422 HQ"), (r"prores.*422.*lt|proreslt", 1.64, "ProRes 422 LT"),
+             (r"prores.*proxy", 0.72, "ProRes Proxy"), (r"prores", 2.37, "ProRes 422"),
+             (r"dnxhr.*444", 5.6, "DNxHR 444"), (r"dnxhr.*hqx", 3.5, "DNxHR HQX"), (r"dnxhr.*hq", 2.8, "DNxHR HQ"),
+             (r"dnxhr.*sq", 1.85, "DNxHR SQ"), (r"dnxhr.*lb", 0.58, "DNxHR LB"), (r"dnxhd", 2.9, "DNxHD"),
+             (r"cineform", 2.5, "CineForm"), (r"uncompressed|v210|r210|rgb ?10|^yuv", 20, "uncompressed"),
+             (r"mjpeg|motion ?jpeg|photo ?jpeg", 2.5, "Motion JPEG")]
+AUTO_BPP = [(r"h\.?265|hevc", 0.25, "H.265"), (r"h\.?264|avc|x264", 0.4, "H.264"), (r"av1", 0.2, "AV1"),
+            (r"vp9", 0.25, "VP9"), (r"mpeg|xdcam|imx", 0.5, "MPEG")]
+IMAGE_BYTES = {"tif": ({8: 3, 16: 6}, True, "TIFF"), "tiff": ({8: 3, 16: 6}, True, "TIFF"), "dpx": ({8: 3, 10: 4, 16: 6}, True, "DPX"),
+               "png": ({8: 1.6, 16: 3.5}, False, "PNG"), "jpg": ({8: 0.35}, False, "JPEG"), "jpeg": ({8: 0.35}, False, "JPEG"),
+               "exr": ({16: 3, 32: 6}, False, "EXR"), "bmp": ({8: 3}, True, "BMP"), "tga": ({8: 3}, True, "TGA")}
+LEVEL_SCALE = {"Least": 0.3, "Low": 0.5, "Medium": 0.72, "High": 1, "Best": 1.5}
+COMPRESSED_AUDIO_KBPS = 320
+
+
+def estimate_bytes(fmt, codec, settings, width, height, fps, frames, kind="final", channels=2) -> dict:
+    """What a job will weigh, from its codec settings: a bit rate x seconds (close to exact), a fixed-rate codec's bits per
+    pixel, a long-GOP codec's typical automatic rate, or a still's bytes per pixel. Mirrors estimateBytes() in src/estimate.js."""
+    settings = settings or {}
+    pixels = int(width or 0) * int(height or 0)
+    frames = int(frames or 0)
+    fmt = str(fmt or "").lower()
+    codec = str(codec or "")
+    if not pixels or not frames:
+        return {"bytes": None, "exact": False, "basis": "unknown size or length"}
+    seconds = frames / fps if fps else 0
+    export_video = settings.get("ExportVideo") is not False
+    export_audio = settings.get("ExportAudio") is not False and fmt not in IMAGE_BYTES and kind != "still"
+    video_bits, exact = 0.0, True
+    if not export_video:
+        basis = "audio only"
+    elif fmt in IMAGE_BYTES:
+        table, exact, name = IMAGE_BYTES[fmt]
+        if fmt == "exr":
+            depth = 32 if re.search(r"float|32", codec, re.I) else 16
+        else:
+            m = re.search(r"(8|10|12|16|32)\s*bits?|rgba?\s*(8|10|12|16)|^(8|10|16)", codec, re.I)
+            depth = int(next(g for g in m.groups() if g)) if m else int(settings.get("BitDepth") or 8)
+        per_pixel = table.get(depth) or next((table[k] for k in sorted(table) if k >= depth), table.get(8, table[min(table)]))
+        if fmt in ("jpg", "jpeg"):
+            per_pixel *= LEVEL_SCALE.get(str(settings.get("VideoQuality")), 1)
+        video_bits = per_pixel * 8 * pixels * frames
+        basis = f"{name} at {depth}-bit"
+    else:
+        q = settings.get("VideoQuality")
+        kbps = q if isinstance(q, (int, float)) and not isinstance(q, bool) and q > 0 else int(q) if isinstance(q, str) and q.isdigit() and int(q) > 0 else 0
+        if kbps:
+            video_bits = kbps * 1000 * seconds
+            basis = f"{kbps:,} kb/s"
+        else:
+            fixed = next((f for f in FIXED_BPP if re.search(f[0], codec, re.I)), None)
+            auto = fixed or next((a for a in AUTO_BPP if re.search(a[0], codec, re.I)), None)
+            video_bits = (auto[1] if auto else 0.4) * LEVEL_SCALE.get(str(q), 1) * pixels * frames
+            exact = False
+            basis = f"{fixed[2]} data rate" if fixed else f"{auto[2] if auto else codec or 'codec'} on automatic quality"
+    audio_bits = 0.0
+    if export_audio:
+        acodec = str(settings.get("AudioCodec") or "").lower()
+        if acodec in ("lpcm", "pcm", "linearpcm", "wav"):
+            audio_bits = channels * int(settings.get("AudioBitDepth") or 24) * int(settings.get("AudioSampleRate") or 48000) * seconds
+        else:
+            audio_bits = COMPRESSED_AUDIO_KBPS * 1000 * seconds
+            exact = False
+    total = round((round(video_bits / 8) + round(audio_bits / 8)) * 1.01)  # container overhead
+    return {"bytes": total, "exact": exact, "basis": basis}
+
+
+def format_bytes(n) -> str:
+    if n is None:
+        return ""
+    if n >= 1e12:
+        return f"{n / 1e12:.2f} TB"
+    if n >= 1e9:
+        return f"{n / 1e9:.0f} GB" if n >= 1e10 else f"{n / 1e9:.1f} GB"
+    if n >= 1e6:
+        return f"{n / 1e6:.0f} MB" if n >= 1e8 else f"{n / 1e6:.1f} MB"
+    if n >= 1e3:
+        return f"{round(n / 1e3)} KB"
+    return f"{n} B"
+
+
+def size_label(est) -> str:
+    """'~1.2 GB' for a typical figure, '1.2 GB' for an exact one, '' when nothing is known."""
+    if not est or est.get("bytes") is None:
+        return ""
+    return ("" if est.get("exact") else "~") + format_bytes(est["bytes"])
+
+
+def estimate_for(prof: dict, info, frames: int, kind: str):
+    if not info or not frames:
+        return None
+    res = prof.get("resolution") or {}
+    return estimate_bytes(prof["format"], prof["codec"], prof.get("settings"), res.get("width") or info.get("width"),
+                          res.get("height") or info.get("height"), prof.get("frameRate") or info.get("fps"), frames, kind)
+
+
+# ----------------------------------------------------------------- the In/Out range
+
+def in_out_range(raw_in, raw_out, start: int, end: int, fps: float, drop: bool = False):
+    """Pure part of timeline_in_out(): Resolve's relative frames become absolute (numbers that only make sense as absolute
+    frames pass through), swapped if reversed, clamped to the timeline; None when they cover the whole timeline."""
+    abs_in, abs_out = int(raw_in), int(raw_out)
+    if abs_out <= end - start or abs_in < start:
+        abs_in += start
+        abs_out += start
+    if abs_out < abs_in:
+        abs_in, abs_out = abs_out, abs_in
+    abs_in = min(end, max(start, abs_in))
+    abs_out = min(end, max(start, abs_out))
+    if abs_in == start and abs_out == end:
+        return None
+    return {"absIn": abs_in, "absOut": abs_out, "frames": abs_out - abs_in + 1,
+            "tcIn": frames_to_tc(abs_in, fps, drop), "tcOut": frames_to_tc(abs_out, fps, drop)}
+
+
+def marks_within(marks: list, rng) -> tuple[list, list]:
+    """The marks inside the In/Out range: a mark that starts outside is skipped, one that runs past Out is clipped to it."""
+    if not rng:
+        return list(marks), []
+    kept, skipped = [], []
+    for m in marks:
+        if m["absIn"] < rng["absIn"] or m["absIn"] > rng["absOut"]:
+            skipped.append(m)
+        elif m["absOut"] > rng["absOut"]:
+            kept.append({**m, "absOut": rng["absOut"], "durationFrames": rng["absOut"] - m["absIn"] + 1, "clipped": True})
+        else:
+            kept.append(m)
+    return kept, skipped
+
+
+def expand_items(profiles, targets, timeline_name, project_name, marks, template, out_dir, now=None, underscore_spaces=False, rng=None, info=None):
+    """Pure expansion of one timeline into job items; mirrors src/batch.js expandItems(). `rng` is the In/Out range the final
+    renders and the marks are kept within (None = whole timeline); `info` the timeline's facts for durations and size estimates."""
     items, notes = [], []
+    marks, skipped = marks_within(marks, rng)
+    for kind in ("cut", "still"):
+        n = sum(1 for m in skipped if m["kind"] == kind)
+        if n:
+            notes.append({"profile": None, "profileName": None, "timeline": timeline_name,
+                          "message": f"{n} {kind}{'' if n == 1 else 's'} outside In/Out on '{timeline_name}' left out"})
+    final_frames = rng["frames"] if rng else (info or {}).get("frames") or 0
     for prof in profiles:
         target = prof.get("target") or "timeline"
         if target not in targets:
@@ -387,7 +530,9 @@ def expand_items(profiles, targets, timeline_name, project_name, marks, template
         }
         if target == "timeline":
             items.append({"profile": prof, "timeline": timeline_name, "kind": "final", "targetDir": target_dir,
-                          "fileName": render_name(template or DEFAULT_TEMPLATE, ctx, now, underscore_spaces) + prof["fileSuffix"], "range": None, "mark": None})
+                          "fileName": render_name(template or DEFAULT_TEMPLATE, ctx, now, underscore_spaces) + prof["fileSuffix"],
+                          "range": (rng["absIn"], rng["absOut"]) if rng else None, "mark": None,
+                          "frames": final_frames, "estimate": estimate_for(prof, info, final_frames, "final")})
             continue
         kind = "cut" if target == "cuts" else "still"
         chosen = [m for m in marks if m["kind"] == kind]
@@ -400,8 +545,14 @@ def expand_items(profiles, targets, timeline_name, project_name, marks, template
             n = f"{m['index']:02d}"
             name = render_name(tpl, {**ctx, "cut": n, "still": n, "n": n, "tc": tc_for_filename(m["tcIn"]),
                                      "tcout": tc_for_filename(m["tcOut"]), "in": m["absIn"], "out": m["absOut"]}, now, underscore_spaces)
+            mark = dict(m)
+            if m.get("clipped") and info:
+                mark["tcOut"] = frames_to_tc(m["absOut"], info["fps"], info.get("drop", False))
+                mark["duration"] = duration_label(m["durationFrames"], info["fps"])
+            frames = 1 if kind == "still" else m["durationFrames"]
             items.append({"profile": prof, "timeline": timeline_name, "kind": kind, "targetDir": target_dir,
-                          "fileName": name + prof["fileSuffix"], "range": (m["absIn"], m["absOut"]), "mark": m})
+                          "fileName": name + prof["fileSuffix"], "range": (m["absIn"], m["absOut"]), "mark": mark,
+                          "frames": frames, "estimate": estimate_for(prof, info, frames, kind)})
     return items, notes
 
 
@@ -449,7 +600,36 @@ def timeline_info(tl) -> dict:
     except Exception:  # noqa: BLE001
         drop = False
     start = int(tl.GetStartFrame() or 0)
-    return {"name": tl.GetName(), "startFrame": start, "endFrame": int(tl.GetEndFrame() or start), "fps": fps, "drop": drop}
+    end = int(tl.GetEndFrame() or start)
+    width = height = 0
+    try:
+        width = int(float(tl.GetSetting("timelineResolutionWidth") or 0))
+        height = int(float(tl.GetSetting("timelineResolutionHeight") or 0))
+    except Exception:  # noqa: BLE001
+        pass
+    info = {"name": tl.GetName(), "startFrame": start, "endFrame": end, "fps": fps, "drop": drop, "frames": end - start + 1,
+            "width": width, "height": height, "vertical": bool(width and height and height > width)}
+    info["inOut"] = timeline_in_out(tl, info)
+    return info
+
+
+def timeline_in_out(tl, info: dict):
+    """The In and Out set in Resolve (I and O) as absolute frames, or None when none is set or this Resolve has no
+    Timeline.GetMarkInOut (older than 19). Mirrors ResolveBridge.timelineInOut()."""
+    getter = getattr(tl, "GetMarkInOut", None)
+    if not callable(getter):
+        return None
+    try:
+        raw = getter() or {}
+    except Exception:  # noqa: BLE001
+        return None
+    pick = (raw.get("video") or raw.get("audio")) if isinstance(raw, dict) else None
+    if not pick or pick.get("in") is None or pick.get("out") is None:
+        return None
+    try:
+        return in_out_range(int(pick["in"]), int(pick["out"]), info["startFrame"], info["endFrame"], info["fps"], info["drop"])
+    except (TypeError, ValueError):
+        return None
 
 
 def timeline_marks(tl) -> tuple[dict, list[dict]]:
@@ -545,7 +725,7 @@ def apply_profile(project, profile: dict, target_dir: str, custom_name: str, rng
     return apply_render_settings(project, settings, label=f" for {profile.get('name') or profile['id']!r} ({fmt[1]}/{codec[1]})")
 
 
-def queue_jobs(project, profiles, targets, out_dir: str, template: str, timelines=None, clear_queue=False, log=print, underscore_spaces=True):
+def queue_jobs(project, profiles, targets, out_dir: str, template: str, timelines=None, clear_queue=False, log=print, underscore_spaces=True, use_in_out=True):
     project_name = project.GetName()
     current_name, all_names = list_timelines(project)
     wanted = list(timelines) if timelines else ([current_name] if current_name else [])
@@ -564,8 +744,11 @@ def queue_jobs(project, profiles, targets, out_dir: str, template: str, timeline
     try:
         for tl_name in wanted:
             tl = timeline_by_name(project, tl_name)
-            marks = timeline_marks(tl)[1] if needs_marks else []
-            items, tl_notes = expand_items(profiles, targets, tl_name, project_name, marks, template, out_dir, None, underscore_spaces)
+            info, marks = timeline_marks(tl) if needs_marks else (timeline_info(tl), [])
+            rng = info.get("inOut") if use_in_out else None
+            if rng:
+                log(f"'{tl_name}': In to Out {rng['tcIn']} -> {rng['tcOut']} ({rng['frames']} frames); the final renders that range and marks outside it are left out")
+            items, tl_notes = expand_items(profiles, targets, tl_name, project_name, marks, template, out_dir, None, underscore_spaces, rng=rng, info=info)
             notes.extend(tl_notes)
             for n in tl_notes:
                 log(f"{n['profileName']}: {n['message']}")
@@ -587,10 +770,11 @@ def queue_jobs(project, profiles, targets, out_dir: str, template: str, timeline
                         raise RuntimeError("AddRenderJob returned nothing")
                     jobs.append({"jobId": job_id, "timeline": tl_name, "profile": prof["id"], "profileName": prof["name"],
                                  "label": it["label"], "kind": it["kind"], "format": prof["format"], "codec": prof["codec"],
-                                 "resolution": prof.get("resolution"), "mark": it["mark"],
+                                 "resolution": prof.get("resolution"), "mark": it["mark"], "estimate": it.get("estimate"),
                                  "targetDir": it["targetDir"], "fileName": it["fileName"]})
                     where = f" [{it['mark']['tcIn']}{' -> ' + it['mark']['tcOut'] if it['kind'] == 'cut' else ''}]" if it["mark"] else ""
-                    log(f"Queued {prof['name']} for '{tl_name}'{where} -> {os.path.join(it['targetDir'], it['fileName'])}")
+                    size = f" ({size_label(it['estimate'])})" if size_label(it.get("estimate")) else ""
+                    log(f"Queued {prof['name']} for '{tl_name}'{where} -> {os.path.join(it['targetDir'], it['fileName'])}{size}")
                 except Exception as err:  # noqa: BLE001 - keep going with the other items
                     errors.append({"timeline": tl_name, "profile": prof["id"], "fileName": it["fileName"], "message": str(err)})
                     log(f"Skipped {prof['name']} ({it['fileName']}): {err}")
@@ -867,6 +1051,8 @@ def parse_args(argv):
     p.add_argument("--render", action="store_true", help="start rendering after queuing")
     p.add_argument("--wait", action="store_true", help="wait for rendering to finish (implies --render)")
     p.add_argument("--clear-queue", action="store_true", help="delete existing render jobs first")
+    p.add_argument("--whole-timeline", action="store_true", default=os.environ.get("EXPORTX_WHOLE") == "1",
+                   help="ignore the In and Out set in Resolve and export each timeline whole (default: In to Out when one is set)")
     p.add_argument("--upload", action="store_true", help="after --wait, upload the finished files into a project on the portal (EXPORTX_PORTAL_URL/TOKEN/PROJECT)")
     p.add_argument("--portal-url", default=os.environ.get("EXPORTX_PORTAL_URL"), help="portal URL for --upload")
     p.add_argument("--portal-token", default=os.environ.get("EXPORTX_PORTAL_TOKEN"), help="the plugin key from the portal (Settings > ExportX)")
@@ -915,6 +1101,36 @@ def selftest() -> int:
     assert s["FormatWidth"] == 1920 and s["TargetDir"] == "/out" and s["CustomName"] == "name"
     _, only_notes = expand_items([by_id["cuts-social-1080"]], TARGETS, "TL", "P", [], DEFAULT_TEMPLATE, "/out", fixed)
     assert only_notes and "No cuts marked" in only_notes[0]["message"]
+    # In/Out: Resolve reports relative frames; a range covering everything means "whole timeline"
+    rng = in_out_range(48, 1223, 86400, 86400 + 24 * 60 - 1, 24)
+    assert rng == {"absIn": 86448, "absOut": 87623, "frames": 1176, "tcIn": "01:00:02:00", "tcOut": "01:00:50:23"}, rng
+    assert in_out_range(0, 24 * 60 - 1, 86400, 86400 + 24 * 60 - 1, 24) is None
+    assert in_out_range(87623, 86448, 86400, 86400 + 24 * 60 - 1, 24)["absIn"] == 86448  # absolute, reversed
+    kept, skipped = marks_within(marks, {"absIn": 86450, "absOut": 86460})
+    assert not kept and len(skipped) == 2
+    kept, skipped = marks_within(marks, {"absIn": 86400, "absOut": 86450})
+    assert kept[0]["clipped"] and kept[0]["absOut"] == 86450 and kept[0]["durationFrames"] == 27 and [m["kind"] for m in skipped] == ["still"]
+    tl_info = {"name": "Main Edit", "startFrame": 86400, "endFrame": 87839, "fps": 24.0, "drop": False, "frames": 1440, "width": 1920, "height": 1080}
+    items, notes = expand_items([by_id["final-4k-h265"], by_id["cuts-social-1080"], by_id["stills-tiff"]], TARGETS, "Main Edit", "P", marks,
+                                DEFAULT_TEMPLATE, "/out", fixed, rng={"absIn": 86400, "absOut": 86450, "frames": 51}, info=tl_info)
+    assert len(items) == 2 and items[0]["range"] == (86400, 86450) and items[0]["frames"] == 51, items
+    assert items[1]["range"] == (86424, 86450) and items[1]["mark"]["tcOut"] == "01:00:02:02" and items[1]["mark"]["clipped"] and items[1]["frames"] == 27
+    assert notes and notes[0]["message"] == "1 still outside In/Out on 'Main Edit' left out", notes
+    assert items[0]["estimate"]["bytes"] == round((45000 * 1000 * 51 / 24 / 8 + 320 * 1000 * 51 / 24 / 8) * 1.01) and items[0]["estimate"]["basis"] == "45,000 kb/s"
+    # size estimates mirror src/estimate.js
+    est = estimate_bytes("mp4", "H264", {"VideoQuality": 16000, "AudioCodec": "aac"}, 1920, 1080, 30, 1800)
+    assert est["bytes"] == round((120_000_000 + 2_400_000) * 1.01) and not est["exact"], est
+    est = estimate_bytes("mp4", "H264", {"VideoQuality": 16000, "AudioCodec": "lpcm", "AudioBitDepth": 24, "AudioSampleRate": 48000}, 1920, 1080, 30, 1800)
+    assert est["bytes"] == round((120_000_000 + 17_280_000) * 1.01) and est["exact"], est
+    assert estimate_bytes("tif", "RGB16", {}, 1920, 1080, 24, 1, "still") == {"bytes": round(1920 * 1080 * 6 * 1.01), "exact": True, "basis": "TIFF at 16-bit"}
+    assert estimate_bytes("exr", "RGB half (PIZ)", {}, 1920, 1080, 24, 1, "still")["bytes"] == round(1920 * 1080 * 3 * 1.01)
+    prores = estimate_bytes("mov", "ProRes422HQ", {"AudioCodec": "lpcm"}, 1920, 1080, 30, 30)
+    assert prores["basis"] == "ProRes 422 HQ data rate" and not prores["exact"] and 26e6 < prores["bytes"] < 29e6, prores
+    assert estimate_bytes("mp4", "H265", {}, 1920, 1080, 24, 240)["bytes"] < estimate_bytes("mp4", "H264", {}, 1920, 1080, 24, 240)["bytes"]
+    assert estimate_bytes("jpg", "auto", {"VideoQuality": "Best"}, 100, 100, 24, 1, "still")["bytes"] > estimate_bytes("jpg", "auto", {"VideoQuality": "High"}, 100, 100, 24, 1, "still")["bytes"]
+    assert estimate_bytes("mp4", "H264", {}, 0, 0, 24, 10)["bytes"] is None
+    assert format_bytes(1_234_567_890) == "1.2 GB" and format_bytes(24_000_000) == "24.0 MB" and format_bytes(950) == "950 B"
+    assert size_label({"bytes": 1_234_567_890, "exact": False}) == "~1.2 GB" and size_label({"bytes": 6_220_800, "exact": True}) == "6.2 MB" and size_label(None) == ""
     class _Picky:
         def __init__(self, refuse):
             self.refuse, self.current = refuse, {}
@@ -1011,7 +1227,13 @@ def main(argv=None) -> int:
     if args.list:
         current, names = list_timelines(project)
         print(f"Project: {project.GetName()}")
-        print("Timelines: " + ", ".join(f"{n}{' (current)' if n == current else ''}" for n in names))
+        print("Timelines:")
+        for n in names:
+            ti = timeline_info(timeline_by_name(project, n))
+            io = (f"In to Out {ti['inOut']['tcIn']} -> {ti['inOut']['tcOut']} ({ti['inOut']['frames']} frames)" if ti.get("inOut")
+                  else "no In/Out set, exports whole")
+            print(f"  {n}{' (current)' if n == current else ''}: {ti['width']}x{ti['height']}{' vertical' if ti['vertical'] else ''}, "
+                  f"{ti['fps']:g} fps, {ti['frames']} frames, {io}")
         tl = project.GetCurrentTimeline()
         if tl:
             info, marks = timeline_marks(tl)
@@ -1058,7 +1280,8 @@ def main(argv=None) -> int:
         timelines = list_timelines(project)[1]
 
     jobs, errors, notes = queue_jobs(project, chosen, targets, out_dir, args.name, timelines, args.clear_queue,
-                                     underscore_spaces=not args.keep_spaces and CONFIG["underscore_spaces"])
+                                     underscore_spaces=not args.keep_spaces and CONFIG["underscore_spaces"],
+                                     use_in_out=not (args.whole_timeline or (not argv and CONFIG.get("whole_timeline"))))
     print(f"\nQueued {len(jobs)} job(s); {len(errors)} skipped; {len(notes)} note(s).")
     if not jobs:
         return 1

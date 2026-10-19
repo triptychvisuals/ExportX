@@ -20,7 +20,12 @@
       "tags": [
         "final",
         "master"
-      ]
+      ],
+      "renderPreset": null,
+      "resolution": null,
+      "frameRate": null,
+      "fileSuffix": "",
+      "enabledByDefault": true
     },
     {
       "id": "final-4k-h265",
@@ -47,7 +52,11 @@
       "tags": [
         "final",
         "4k"
-      ]
+      ],
+      "renderPreset": null,
+      "frameRate": null,
+      "fileSuffix": "",
+      "enabledByDefault": true
     },
     {
       "id": "final-1080-h264",
@@ -74,7 +83,11 @@
       "tags": [
         "final",
         "web"
-      ]
+      ],
+      "renderPreset": null,
+      "frameRate": null,
+      "fileSuffix": "",
+      "enabledByDefault": true
     },
     {
       "id": "cuts-social-1080",
@@ -101,7 +114,11 @@
       "tags": [
         "social",
         "cuts"
-      ]
+      ],
+      "renderPreset": null,
+      "frameRate": null,
+      "fileSuffix": "",
+      "enabledByDefault": true
     },
     {
       "id": "cuts-social-vertical",
@@ -129,16 +146,19 @@
       "tags": [
         "social",
         "cuts"
-      ]
+      ],
+      "renderPreset": null,
+      "frameRate": null,
+      "fileSuffix": ""
     },
     {
       "id": "stills-tiff",
       "name": "Stills TIFF",
       "label": "Still",
-      "description": "One full-resolution TIFF for every still you marked. Resolve adds the frame number to the file name.",
+      "description": "16-bit TIFF, one file per still mark, at the timeline’s size: the most you can get out of an 8-bit or 10-bit timeline.",
       "target": "stills",
       "format": "tif",
-      "codec": "auto",
+      "codec": "RGB16",
       "renderMode": "single",
       "settings": {
         "ExportVideo": true
@@ -146,25 +166,81 @@
       "subfolder": "06_Stills",
       "tags": [
         "stills"
-      ]
+      ],
+      "renderPreset": null,
+      "resolution": null,
+      "frameRate": null,
+      "fileSuffix": "",
+      "enabledByDefault": true
     },
     {
       "id": "stills-jpeg",
       "name": "Stills JPEG",
       "label": "Still",
-      "description": "One JPEG for every still you marked, for quick sharing.",
+      "description": "JPEG at Resolve’s Best quality, one file per still mark, for sharing and socials.",
       "target": "stills",
       "format": "jpg",
       "codec": "auto",
       "renderMode": "single",
       "settings": {
-        "ExportVideo": true
+        "ExportVideo": true,
+        "VideoQuality": "Best"
       },
       "subfolder": "06_Stills/JPEG",
       "enabledByDefault": false,
       "tags": [
         "stills"
-      ]
+      ],
+      "renderPreset": null,
+      "resolution": null,
+      "frameRate": null,
+      "fileSuffix": ""
+    },
+    {
+      "id": "stills-png",
+      "name": "Stills PNG 16-bit",
+      "label": "StillPNG",
+      "description": "16-bit PNG, lossless, one file per still mark. Smaller than TIFF, same picture.",
+      "target": "stills",
+      "format": "png",
+      "codec": "RGB16",
+      "renderMode": "single",
+      "resolution": null,
+      "frameRate": null,
+      "settings": {
+        "ExportVideo": true
+      },
+      "subfolder": "06_Stills/PNG",
+      "fileSuffix": "",
+      "enabledByDefault": false,
+      "tags": [
+        "stills",
+        "png"
+      ],
+      "renderPreset": null
+    },
+    {
+      "id": "stills-exr",
+      "name": "Stills EXR (half float)",
+      "label": "StillEXR",
+      "description": "OpenEXR 16-bit float, one file per still mark: the full range of a graded frame for print or VFX.",
+      "target": "stills",
+      "format": "exr",
+      "codec": "RGB half (PIZ)",
+      "renderMode": "single",
+      "resolution": null,
+      "frameRate": null,
+      "settings": {
+        "ExportVideo": true
+      },
+      "subfolder": "06_Stills/EXR",
+      "fileSuffix": "",
+      "enabledByDefault": false,
+      "tags": [
+        "stills",
+        "exr"
+      ],
+      "renderPreset": null
     },
     {
       "id": "review-proxy",
@@ -191,7 +267,10 @@
       "enabledByDefault": false,
       "tags": [
         "review"
-      ]
+      ],
+      "renderPreset": null,
+      "frameRate": null,
+      "fileSuffix": ""
     },
     {
       "id": "clips-prores",
@@ -214,7 +293,11 @@
       "tags": [
         "vfx",
         "handoff"
-      ]
+      ],
+      "renderPreset": null,
+      "resolution": null,
+      "frameRate": null,
+      "fileSuffix": ""
     }
   ]
 }

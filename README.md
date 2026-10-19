@@ -2,46 +2,48 @@
 
 **Batch deliverables for DaVinci Resolve with a few clicks.**
 
-ExportX is a DaVinci Resolve plugin that drives Resolve's own render engine. Watch the cut in the panel, hold **C** to select each social cut, press **S** on each frame you want as a still, then press one button and ExportX queues and renders everything: the final 4K and master exports, one file per cut, one frame per still, each with the right codec, resolution, name (`261018_SpotA_Final.mp4`) and subfolder.
+ExportX is a DaVinci Resolve plugin that drives Resolve's own render engine. Watch the cut in the panel, hold **C** to select each social cut, press **S** on each frame you want as a still, then press one button and ExportX queues and renders everything: the final 4K and master exports, one file per cut, one frame per still, each with the right codec, resolution, name (`261018_SpotA_Final.mp4`) and subfolder. Set In and Out in Resolve and it exports just that part. Every deliverable shows what the file will weigh before you press anything.
 
 ```
-┌ X ExportX  [Export] Settings   ● SpotA_Launch › Main Edit                                    ↻ ┐
-│ MARK WHILE IT PLAYS        Main Edit · 24 fps │                                                  │
+┌ X ExportX  [Export] Settings   ● SpotA_Launch › Main Edit                                      ↻ ┐
+│ MARK WHILE IT PLAYS       Main Edit ▾  24 fps │                                                  │
 │ ┌───────────────────┐ ┌───────────────────┐   │                                                  │
 │ │ [C] Hold for a cut│ │ [S] Still         │   │                                                  │
-│ └───────────────────┘ └───────────────────┘   │            preview of the timeline              │
-│ CUTS 2                    STILLS 1            │                  (720p proxy)                   │
-│ 01 01:00:04:00→01:00:09:11 5.5s  01 01:00:20:20│                                                 │
+│ └───────────────────┘ └───────────────────┘   │            preview of the timeline               │
+│ CUTS 2                    STILLS 1            │            (1280-wide proxy, 9:16 when the       │
+│ 01 01:00:04:00→01:00:09:11 5.5s 01 01:00:20:20│             timeline is vertical)                │
 │ 02 01:00:42:23→01:00:44:03 1.2s               │                                                  │
-│                                               │ ━━━━▇▇▇━━━━━━━│━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ │
-│ WHAT TO EXPORT                                │ ⏸ 🔈 01:00:04:13   Marks come from the preview.  │
-│ ☑ Master              mov · ProRes422HQ       │ ● preview playing · Resolve at 01:00:48:03       │
-│ ☑ Final 4K            mp4 · H265 · 3840×2160  │                                     01:00:04:13 │
-│ ☑ Web 1080p           mp4 · H264 · 1920×1080  │ ● 261018_SpotA_Launch_Master          done      │
-│ ☑ Social cuts (per cut)                       │ ● 261018_SpotA_Launch_Final           54%       │
-│ ☑ Stills TIFF (per still)                     │ ○ 261018_SpotA_Launch_Web             waiting   │
-│ Save to /Volumes/Deliver/SpotA_Launch [Choose]│ ○ 261018_SpotA_Launch_Social_01       waiting   │
-├───────────────────────────────────────────────┤ ○ 261018_SpotA_Launch_Still_01        waiting   │
+│ In→Out 01:00:02:00→01:00:50:23 · 49.0s   ● on │ ━━━━▇▇▇━━━━━━━│━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━  │
+│                                               │ ⏸ 🔈 01:00:04:13   Marks come from the preview.   │
+│ WHAT TO EXPORT                                │ ● preview playing · Resolve at 01:00:48:03       │
+│ ☑ Master          mov · ProRes422HQ  ≈ 1.1 GB │                                     01:00:04:13  │
+│ ☑ Final 4K        mp4 · H265 · 2160p ≈ 280 MB │ ● 261018_SpotA_Launch_Master          done       │
+│ ☑ Web 1080p       mp4 · H264 · 1080p ≈ 101 MB │ ● 261018_SpotA_Launch_Final           54%        │
+│ ☑ Social cuts (per cut)                       │ ○ 261018_SpotA_Launch_Web             waiting    │
+│ ☑ Stills TIFF (per still)                     │ ○ 261018_SpotA_Launch_Social_01       waiting    │
+│ Save to /Volumes/Deliver/SpotA_Launch [Choose]│ ○ 261018_SpotA_Launch_Still_01        waiting    │
+├───────────────────────────────────────────────┤                                                  │
 │ [        Export everything · 7 files        ] │                                                  │
 │ [ Cuts only ]            [ Stills only ]      │                                                  │
-│ 3 final exports · 2 cuts · 2 stills → …       │                                                  │
+│ 3 final exports · 2 cuts · 2 stills · ≈ 1.5 GB│                                                  │
 └───────────────────────────────────────────────┴──────────────────────────────────────────────────┘
 ```
 
 ![ExportX panel](docs/screenshots/panel.png)
 
-**Try it without Resolve:** open [`docs/preview.html`](docs/preview.html) in a browser. It is the real panel bundled with a fake Resolve and a test-pattern video standing in for your timeline, so you can hold C, press S, press Export and edit deliverables in Settings. Rebuild it with `node scripts/build-preview.js`. More screenshots: [holding C](docs/screenshots/holding.png), [exporting](docs/screenshots/exporting.png), [uploading to the portal](docs/screenshots/uploading.png), [all on the portal](docs/screenshots/uploaded.png), [Settings](docs/screenshots/settings.png), [phone width](docs/screenshots/narrow.png).
+**Try it without Resolve:** open [`docs/preview.html`](docs/preview.html) in a browser. It is the real panel bundled with a fake Resolve and a test-pattern video standing in for your timeline, so you can hold C, press S, press Export and edit deliverables in Settings. Rebuild it with `node scripts/build-preview.js`. More screenshots: [holding C](docs/screenshots/holding.png), [exporting](docs/screenshots/exporting.png), [uploading to the portal](docs/screenshots/uploading.png), [all on the portal](docs/screenshots/uploaded.png), [Settings](docs/screenshots/settings.png), [a vertical 9:16 timeline](docs/screenshots/vertical.png), [phone width](docs/screenshots/narrow.png).
 
 ## The loop
 
-1. **What to export.** Tick the final exports you owe (Master, Final 4K, Web 1080p), the per-cut deliverable for social, and the per-still format. Choose the folder once; it is remembered.
-2. **Mark while it plays.** Press **Render preview** once and a small 720p copy of the timeline plays in the panel (made by Resolve's render engine, cached per timeline). **Hold C** across a section to select a cut (in on press, out on release); **press S** on a frame to mark a still. Both keys can be changed in Settings, and the two on-screen buttons do the same with the mouse. Space plays and pauses, the arrow keys step a frame, and Resolve's playhead follows when you pause. Each mark becomes a Resolve timeline marker (cyan for cuts, pink for stills), so you see them on the timeline, can trim or delete them there, and they travel with the project. Without a preview, the pad marks from Resolve's own playhead while you play there.
-3. **Export.** Press **Export everything**, or **Cuts only** / **Stills only**. ExportX adds one job per deliverable to Resolve's own render queue (cuts as in/out ranges, stills as single-frame image renders), starts the render and shows progress per file. Everything from here on happens **in the background**: keep marking, switch to Resolve or minimise the panel. The dock or taskbar icon shows the progress, and a system notification pops when the batch is done (click it to bring the panel back).
-4. **Upload to the Triptych Studios portal** (optional). With the switch next to Export on, you pick **which portal project** the batch goes in (the picker lists the portal's projects by name, job number and client, remembers your choice per Resolve project, and pre-selects a name match). When the render finishes, every file goes into that project's **Delivery tab**, filed into the box its kind fits: finals in the hero or master box, cuts in the social box, stills in the stills box. The upload runs in the background with its own progress and notification; the card above the file list reads `All 7 files in SpotA Launch on Triptych Studios` with an *open on the portal* link, and each file row says which box it landed in. On the portal, any file can be moved to another box, and nothing reaches the client until you press *Send the final delivery*.
+1. **What to export.** Tick the final exports you owe (Master, Final 4K, Web 1080p), the per-cut deliverable for social, and the per-still format. Choose the folder once; it is remembered. Each row shows the estimated file size from its codec settings and the length of what you are exporting (`≈ 1.1 GB`; a plain figure when it is exact, as for a bit rate with PCM audio or a TIFF), and the summary under the Export button adds them up.
+2. **Mark while it plays.** Press **Render preview** once and a small 720p copy of the timeline plays in the panel (made by Resolve's render engine, cached per timeline). **Hold C** across a section to select a cut (in on press, out on release); **press S** on a frame to mark a still. The two keycaps on screen are indicators, not buttons: C lights up cyan while you hold it, with the in point and the elapsed time, and S flashes pink when a still lands, so you can see the keys work in real time. Both keys can be changed in Settings. Space plays and pauses, the arrow keys step a frame, and Resolve's playhead follows when you pause. Each mark becomes a Resolve timeline marker (cyan for cuts, pink for stills), so you see them on the timeline, can trim or delete them there, and they travel with the project. Without a preview, the keys mark from Resolve's own playhead while you play there. A 1080×1920 timeline plays in a vertical 9:16 viewer. When the project has several timelines, the picker at the top of the mark block chooses which one you mark and export; the preview, the marks and the final follow it.
+3. **In to Out.** Set In and Out in Resolve (I and O) and ExportX exports only that part of the selected timeline: the final renders In to Out, cuts and stills outside it are left out (a cut running past Out ends at Out), and the preview covers the same range. The row under the mark lists shows it (`In to Out 01:00:02:00 → 01:00:50:23 · 49.0s`); switch *only In to Out* off to export the whole timeline. With no In and Out set, the whole timeline is exported. Reading the points needs Resolve 19 or newer.
+4. **Export.** Press **Export everything**, or **Cuts only** / **Stills only**. ExportX adds one job per deliverable to Resolve's own render queue (cuts as in/out ranges, stills as single-frame image renders), starts the render and shows progress per file. Everything from here on happens **in the background**: keep marking, switch to Resolve or minimise the panel. The dock or taskbar icon shows the progress, and a system notification pops when the batch is done (click it to bring the panel back).
+5. **Upload to the Triptych Studios portal** (optional). With the switch next to Export on, you pick **which portal project** the batch goes in (the picker lists the portal's projects by name, job number and client, remembers your choice per Resolve project, and pre-selects a name match). When the render finishes, every file goes into that project's **Delivery tab**, filed into the box its kind fits: finals in the hero or master box, cuts in the social box, stills in the stills box. The upload runs in the background with its own progress and notification; the card above the file list reads `All 7 files in SpotA Launch on Triptych Studios` with an *open on the portal* link, and each file row says which box it landed in. On the portal, any file can be moved to another box, and nothing reaches the client until you press *Send the final delivery*.
 
 ## Settings
 
-The **Settings** tab edits deliverables in place: name, the label used in file names, whether it applies to the whole timeline, each cut or each still, format and codec (the lists come straight from your Resolve), size, quality or bit rate, a Deliver preset to start from, folder, audio, and whether it is ticked by default. Add, duplicate, reset or delete deliverables there. The same tab holds the file-name pattern with a live example, the capture keys, the **portal** (URL, the plugin key, *Test connection*, auto-upload), extra timelines, and the log. The key is stored encrypted with the OS keychain where Electron offers one.
+The **Settings** tab edits deliverables in place with the same parameters Resolve's Deliver page takes: name, the label used in file names, whether it applies to the whole timeline, each cut or each still, format and codec (the lists come straight from your Resolve), size (the sizes Resolve offers for that codec, the timeline's own, or a custom pair), quality or bit rate, a Deliver preset to start from, folder, audio, whether it is ticked by default, and under *More settings* the rest: frame rate, one file or one per clip, encoding profile, audio codec, bit depth and sample rate, colour space and gamma tags, pixel aspect, alpha, multi-pass encoding and fast start. A line under the form shows the estimated file size for the current timeline and updates as you change the bit rate or the size. Add, duplicate, reset or delete deliverables there. The same tab holds the file-name pattern with a live example, the capture keys, the **portal** (URL, the plugin key, *Test connection*, auto-upload), extra timelines, and the log. The key is stored encrypted with the OS keychain where Electron offers one.
 
 ## The portal
 
@@ -106,12 +108,14 @@ python3 python/exportx_batch.py --all --out ~/Deliver/Job123 --wait --upload --p
 | Web 1080p | timeline | MP4 H.264 1920×1080 | `02_Final/261018_SpotA_Web.mp4` | on |
 | Social cuts | each cut | MP4 H.264 1920×1080 | `04_Social/261018_SpotA_Social_01.mp4` | on |
 | Social cuts 9:16 | each cut | MP4 H.264 1080×1920 | `04_Social/9x16/261018_SpotA_Social9x16_01.mp4` | off |
-| Stills TIFF | each still | TIFF | `06_Stills/261018_SpotA_Still_01_<frame>.tif` | on |
-| Stills JPEG | each still | JPEG | `06_Stills/JPEG/261018_SpotA_Still_01_<frame>.jpg` | off |
+| Stills TIFF | each still | TIFF, 16-bit RGB | `06_Stills/261018_SpotA_Still_01_<frame>.tif` | on |
+| Stills JPEG | each still | JPEG at Resolve's best quality | `06_Stills/JPEG/261018_SpotA_Still_01_<frame>.jpg` | off |
+| Stills PNG 16-bit | each still | PNG, 16-bit RGB | `06_Stills/PNG/261018_SpotA_Still_01_<frame>.png` | off |
+| Stills EXR (half float) | each still | OpenEXR half float, PIZ | `06_Stills/EXR/261018_SpotA_Still_01_<frame>.exr` | off |
 | Review proxy 720p | timeline | MP4 H.264 1280×720 | `03_Review/261018_SpotA_Review.mp4` | off |
 | Individual clips | timeline | ProRes 422, one file per clip | `05_Clips/` | off |
 
-Change any of these under Settings. Codec lists come from your Resolve, so they match what your machine can encode.
+Change any of these under Settings. Codec lists come from your Resolve, so they match what your machine can encode. Stills are one-frame render jobs at the deliverable's size or the timeline's full resolution, straight out of the Deliver engine, so a 16-bit TIFF or PNG is the best Resolve can give for that frame.
 
 ## Repository layout
 
@@ -127,6 +131,7 @@ src/timecode.js     Timecode ↔ frames (drop-frame aware)
 src/profiles.js     Profile loading and validation
 src/naming.js       File-name convention and tokens
 src/portal.js       PortalClient: the portal's plugin API (projects, upload plans, register, batch note)
+src/estimate.js     File-size estimates from codec settings, shared by the batcher and the panel
 portal-kit/         The contract with the portal: README, OpenAPI, schema, examples, reference server, smoke test
 profiles/           Bundled deliverable profiles
 python/             Python edition (Scripts menu / CLI)
@@ -157,6 +162,7 @@ bash scripts/package-portal-kit.sh   # dist/exportx-portal-kit.zip for the porta
 
 - The plugin panel needs **DaVinci Resolve Studio 18 or newer** (Blackmagic only enables Workflow Integration plugins in Studio).
 - The Python edition runs from the Scripts menu in the free edition, and from a terminal in Studio with external scripting enabled.
+- Exporting In to Out needs **Resolve 19 or newer** (`Timeline.GetMarkInOut`); older versions export whole timelines.
 
 ## License
 

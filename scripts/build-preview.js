@@ -20,6 +20,7 @@ const html = read('ui/index.html');
 let css = read('ui/styles.css');
 const renderer = read('ui/renderer.js');
 const mock = read('ui/mock-api.js');
+const estimate = read('src/estimate.js');
 const profiles = JSON.parse(read('profiles/default.json')).profiles;
 const version = JSON.parse(read('package.json')).version;
 const videoPath = path.join(root, 'ui', 'mock-preview.webm');
@@ -31,7 +32,10 @@ const fontsLink =
   '<link rel="preconnect" href="https://fonts.googleapis.com">\n' +
   '<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Wix+Madefor+Display:wght@600;700;800&family=Wix+Madefor+Text:wght@400;500;600;700&display=swap">';
 
-const body = html.slice(html.indexOf('<body>') + '<body>'.length, html.lastIndexOf('</body>')).replace(/<script src="renderer.js"><\/script>\s*/, '');
+const body = html
+  .slice(html.indexOf('<body>') + '<body>'.length, html.lastIndexOf('</body>'))
+  .replace(/<script src="\.\.\/src\/estimate\.js"><\/script>\s*/, '')
+  .replace(/<script src="renderer.js"><\/script>\s*/, '');
 
 const note =
   '<div class="preview-note" role="note">Preview with a fake Resolve and a test-pattern video standing in for your timeline. Hold C to mark a cut, press S for a still, press Export and watch the files render and upload, and try the Settings tab. Nothing is rendered, saved or uploaded.</div>\n';
@@ -40,6 +44,7 @@ const noteCss =
 
 const scripts =
   `<script>window.__EXPORTX_PROFILES__ = ${JSON.stringify(profiles)};${videoUri ? ` window.__EXPORTX_PREVIEW_VIDEO__ = ${JSON.stringify(videoUri)};` : ''}</script>\n` +
+  `<script>\n${estimate}\n</script>\n` +
   `<script>\n${mock}\n</script>\n` +
   `<script>\n${renderer}\n</script>`;
 
