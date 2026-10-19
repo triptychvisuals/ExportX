@@ -325,7 +325,7 @@
       if (batchUpload && settings.portalUrl && !batchProjectId) throw new Error('Pick the portal project the files go in, or turn the upload switch off.');
       for (const j of jobs) log(`Queued "${j.profileName}" → ${j.targetDir}/${j.fileName}`);
       if (req.startRender && jobs.length) startRender();
-      return { jobs, errors: [], notes, rendering: Boolean(req.startRender && jobs.length) };
+      return { jobs, errors: [], notes, warnings: [], rendering: Boolean(req.startRender && jobs.length) };
     },
     render: async () => { startRender(); return true; },
     stop: async () => {

@@ -335,3 +335,40 @@ test('bridge reports no project clearly', async () => {
   const bridge = new ResolveBridge(createMockResolve(null));
   await assert.rejects(bridge.projectName(), /No project is open/);
 });
+
+test('applyProfile drops an extra setting Resolve refuses and reports it, but stops on an essential one', async () => {
+  const picky = createMockResolve({ rejectSettings: (s) => 'VideoQuality' in s || 'AudioBitDepth' in s });
+  const profile = { id: 'p', name: 'Picky', format: 'mp4', codec: 'H264', resolution: { width: 1280, height: 720 }, settings: { VideoQuality: 'Medium', AudioBitDepth: 16, NetworkOptimization: true } };
+  const r = await new ResolveBridge(picky).applyProfile(profile, { targetDir: '/out', customName: 'clip' });
+  assert.deepEqual(r.rejected.map((x) => x.key), ['VideoQuality', 'AudioBitDepth']);
+  assert.equal(r.settings.VideoQuality, undefined);
+  assert.equal(r.settings.NetworkOptimization, true);
+  assert.equal(r.requested.VideoQuality, 'Medium');
+  assert.equal(picky.project.currentSettings.FormatWidth, 1280);
+  assert.equal(picky.project.currentSettings.TargetDir, '/out');
+  assert.equal(picky.project.currentSettings.VideoQuality, undefined);
+
+  const noFolder = createMockResolve({ rejectSettings: (s) => 'TargetDir' in s });
+  await assert.rejects(new ResolveBridge(noFolder).applyProfile(profile, { targetDir: '/nope', customName: 'clip' }), /TargetDir = "\/nope" for "Picky" \(mp4\/H264\)\. Check that the output folder/);
+
+  const noSize = createMockResolve({ rejectSettings: (s) => 'FormatWidth' in s });
+  await assert.rejects(new ResolveBridge(noSize).applyProfile(profile, { targetDir: '/out', customName: 'clip' }), /FormatWidth = 1280 .* not offered for this codec/);
+  const lenient = await new ResolveBridge(noSize).applyProfile(profile, { targetDir: '/out', customName: 'clip', lenient: true });
+  assert.deepEqual(lenient.rejected.map((x) => x.key), ['FormatWidth', 'FormatHeight']);
+  assert.equal(noSize.project.currentSettings.CustomName, 'clip', 'the essentials still went in');
+});
+
+test('queue keeps a job whose extras were refused and says so in warnings', async () => {
+  const picky = createMockResolve({ rejectSettings: (s) => 'VideoQuality' in s, name: 'P', timelines: [{ name: 'TL', fps: 24 }] });
+  const exporter = new BatchExporter(new ResolveBridge(picky), { log: () => {} });
+  const { jobs, errors, warnings } = await exporter.queue({
+    profiles: [{ id: 'web', name: 'Web 1080p', label: 'Web', target: 'timeline', format: 'mp4', codec: 'H264', settings: { VideoQuality: 'High' } }],
+    targetDir: '/out',
+    nameTemplate: '{label}',
+  });
+  assert.equal(errors.length, 0);
+  assert.equal(jobs.length, 1);
+  assert.deepEqual(jobs[0].rejected.map((r) => r.key), ['VideoQuality']);
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0].message, /Resolve does not offer VideoQuality = "High" for mp4\/H264; "Web 1080p" renders without/);
+});

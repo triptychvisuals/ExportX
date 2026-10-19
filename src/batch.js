@@ -159,7 +159,7 @@ class BatchExporter {
     return { items, notes };
   }
 
-  /** Add render jobs. Returns { jobs, errors, notes }. */
+  /** Add render jobs. Returns { jobs, errors, notes, warnings } (warnings: settings Resolve refused and the job renders without). */
   async queue({ profiles = [], targets = TARGETS, targetDir = '', nameTemplate, timelines, clearExisting = false, nameOptions } = {}) {
     if (!profiles.length) throw new ResolveError('Pick at least one deliverable profile.');
     if (!targetDir) throw new ResolveError('Pick an output folder.');
@@ -173,8 +173,12 @@ class BatchExporter {
     }
 
     const jobs = [];
+
     const errors = [];
+
     const notes = [];
+
+    const warnings = [];
     let active = current;
     try {
       for (const timelineName of timelineNames) {
@@ -192,13 +196,23 @@ class BatchExporter {
             if (this.ensureDir) this.ensureDir(item.targetDir);
             const applied = await this.bridge.applyProfile(profile, { targetDir: item.targetDir, customName: item.fileName, range: item.range });
             const jobId = await this.bridge.addRenderJob();
+            const formatId = applied.format ? applied.format.id : profile.format;
+            const codecId = applied.codec ? applied.codec.id : profile.codec;
+            const rejected = applied.rejected || [];
             jobs.push({
               jobId,
               ...info,
-              format: applied.format ? applied.format.id : profile.format,
-              codec: applied.codec ? applied.codec.id : profile.codec,
+              format: formatId,
+              codec: codecId,
               settings: applied.settings,
+              rejected,
             });
+            if (rejected.length) {
+              const what = rejected.map((r) => `${r.key} = ${JSON.stringify(r.value)}`).join(', ');
+              const message = `Resolve does not offer ${what} for ${formatId}/${codecId}; "${profile.name}" renders without`;
+              warnings.push({ timeline: timelineName, profileId: profile.id, profileName: profile.name, fileName: item.fileName, message });
+              this.log(message);
+            }
             const where = item.mark ? ` [${item.mark.tcIn}${item.kind === 'cut' ? ` → ${item.mark.tcOut}` : ''}]` : '';
             this.log(`Queued "${profile.name}" for "${timelineName}"${where} → ${path.join(item.targetDir, item.fileName)}`);
           } catch (err) {
@@ -216,7 +230,7 @@ class BatchExporter {
         }
       }
     }
-    return { jobs, errors, notes };
+    return { jobs, errors, notes, warnings };
   }
 
   async render(jobIds = []) {

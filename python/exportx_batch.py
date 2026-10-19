@@ -472,7 +472,59 @@ def add_mark(tl, kind: str, tc_in: str, tc_out: str | None = None) -> dict:
             "tcOut": frames_to_tc(abs_out, info["fps"], info["drop"])}
 
 
-def apply_profile(project, profile: dict, target_dir: str, custom_name: str, rng=None) -> dict:
+# SetRenderSettings takes the whole dictionary or none of it, so settings go in in
+# layers (mirrors src/resolve.js applyRenderSettings): the essentials together, the
+# picture size as a pair, then every extra on its own; a refused extra is dropped.
+HARD_GROUPS = (("TargetDir",), ("CustomName",), ("SelectAllFrames", "MarkIn", "MarkOut"))
+SIZE_KEYS = ("FormatWidth", "FormatHeight")
+SETTING_HINTS = {
+    "TargetDir": "Check that the output folder exists and that Resolve can write to it.",
+    "CustomName": "The file name has a character Resolve does not accept; change the name template.",
+    "SelectAllFrames": "Resolve did not accept the frame range; clear the marks and set them again.",
+    "MarkIn": "The in and out frames fall outside the timeline; clear the marks and set them again.",
+    "MarkOut": "The in and out frames fall outside the timeline; clear the marks and set them again.",
+    "FormatWidth": "That size is not offered for this codec. Pick a standard size, or leave the size empty to use the timeline's.",
+    "FormatHeight": "That size is not offered for this codec. Pick a standard size, or leave the size empty to use the timeline's.",
+}
+
+
+def apply_render_settings(project, settings: dict, lenient: bool = False, label: str = "") -> tuple[dict, list]:
+    """Returns (applied, rejected). Raises RuntimeError naming the key when an essential one is refused."""
+    applied: dict = {}
+    rejected: list = []
+
+    def try_set(part: dict) -> bool:
+        if not part:
+            return True
+        if project.SetRenderSettings(part):
+            applied.update(part)
+            return True
+        return False
+
+    def refuse(key: str) -> RuntimeError:
+        return RuntimeError(f"Resolve refused the render setting {key} = {settings[key]!r}{label}. {SETTING_HINTS.get(key, '')}".strip())
+
+    hard_keys = [k for g in HARD_GROUPS for k in g]
+    if not try_set({k: settings[k] for k in hard_keys if k in settings}):
+        for group in HARD_GROUPS:
+            part = {k: settings[k] for k in group if k in settings}
+            if part and not try_set(part):
+                raise refuse(next(iter(part)))
+    size = {k: settings[k] for k in SIZE_KEYS if k in settings}
+    if size and not try_set(size):
+        if not lenient:
+            raise refuse("FormatWidth")
+        rejected.extend(size.items())
+    skip = set(hard_keys) | set(SIZE_KEYS)
+    for key, value in settings.items():
+        if key in skip:
+            continue
+        if not try_set({key: value}):
+            rejected.append((key, value))
+    return applied, rejected
+
+
+def apply_profile(project, profile: dict, target_dir: str, custom_name: str, rng=None) -> tuple[dict, list]:
     if profile.get("renderPreset") and not project.LoadRenderPreset(profile["renderPreset"]):
         raise RuntimeError(f"Render preset {profile['renderPreset']!r} could not be loaded")
     fmt = match_entry(project.GetRenderFormats() or {}, profile["format"])
@@ -490,9 +542,7 @@ def apply_profile(project, profile: dict, target_dir: str, custom_name: str, rng
         raise RuntimeError(f"Resolve rejected format/codec {fmt[1]}/{codec[1]}")
     project.SetCurrentRenderMode(0 if profile.get("renderMode") == "individual" else 1)
     settings = build_render_settings(profile, target_dir, custom_name, rng)
-    if not project.SetRenderSettings(settings):
-        raise RuntimeError(f"Resolve rejected render settings for {profile['id']}: {settings}")
-    return settings
+    return apply_render_settings(project, settings, label=f" for {profile.get('name') or profile['id']!r} ({fmt[1]}/{codec[1]})")
 
 
 def queue_jobs(project, profiles, targets, out_dir: str, template: str, timelines=None, clear_queue=False, log=print, underscore_spaces=True):
@@ -529,7 +579,9 @@ def queue_jobs(project, profiles, targets, out_dir: str, template: str, timeline
                 prof = it["profile"]
                 try:
                     os.makedirs(it["targetDir"], exist_ok=True)
-                    apply_profile(project, prof, it["targetDir"], it["fileName"], it["range"])
+                    _applied, rejected = apply_profile(project, prof, it["targetDir"], it["fileName"], it["range"])
+                    if rejected:
+                        log(f"Resolve does not offer {', '.join(f'{k}={v!r}' for k, v in rejected)} for {prof['format']}/{prof['codec']}; {prof['name']} renders without")
                     job_id = project.AddRenderJob()
                     if not job_id:
                         raise RuntimeError("AddRenderJob returned nothing")
@@ -863,6 +915,34 @@ def selftest() -> int:
     assert s["FormatWidth"] == 1920 and s["TargetDir"] == "/out" and s["CustomName"] == "name"
     _, only_notes = expand_items([by_id["cuts-social-1080"]], TARGETS, "TL", "P", [], DEFAULT_TEMPLATE, "/out", fixed)
     assert only_notes and "No cuts marked" in only_notes[0]["message"]
+    class _Picky:
+        def __init__(self, refuse):
+            self.refuse, self.current = refuse, {}
+
+        def SetRenderSettings(self, part):  # noqa: N802 - Resolve's name
+            if any(k in self.refuse for k in part):
+                return False
+            self.current.update(part)
+            return True
+
+    picky = _Picky({"VideoQuality", "AudioBitDepth"})
+    applied, rejected = apply_render_settings(picky, {"TargetDir": "/out", "CustomName": "x", "SelectAllFrames": True, "FormatWidth": 1280, "FormatHeight": 720, "ExportVideo": True, "VideoQuality": "Medium", "AudioBitDepth": 16, "NetworkOptimization": True})
+    assert [k for k, _ in rejected] == ["VideoQuality", "AudioBitDepth"] and "VideoQuality" not in applied and applied["NetworkOptimization"] is True
+    assert picky.current["FormatWidth"] == 1280 and picky.current["TargetDir"] == "/out"
+    try:
+        apply_render_settings(_Picky({"TargetDir"}), {"TargetDir": "/out", "CustomName": "x"})
+    except RuntimeError as err:
+        assert "TargetDir" in str(err) and "output folder" in str(err)
+    else:
+        raise AssertionError("a refused TargetDir should stop the job")
+    try:
+        apply_render_settings(_Picky({"FormatWidth"}), {"TargetDir": "/out", "FormatWidth": 3840, "FormatHeight": 2160})
+    except RuntimeError as err:
+        assert "FormatWidth" in str(err)
+    else:
+        raise AssertionError("a refused size should stop a deliverable")
+    _, lenient_rejected = apply_render_settings(_Picky({"FormatWidth"}), {"TargetDir": "/out", "FormatWidth": 3840, "FormatHeight": 2160}, lenient=True)
+    assert [k for k, _ in lenient_rejected] == ["FormatWidth", "FormatHeight"]
     assert portal_base("portal.example.com/") == "https://portal.example.com"
     assert portal_base("http://localhost:8787/api/plugin/ping") == "http://localhost:8787"
     assert content_type_for("A.MOV") == "video/quicktime" and content_type_for("x.weird") == "application/octet-stream"

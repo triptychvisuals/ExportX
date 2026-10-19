@@ -105,6 +105,76 @@ function buildRenderSettings(profile, opts = {}) {
   return settings;
 }
 
+/**
+ * Project.SetRenderSettings() takes the whole dictionary or none of it: one key
+ * Resolve does not offer for the format and codec in front of it (a quality
+ * level H.264 has no use for, an AAC bit depth, an encoding profile) and the
+ * call answers false. So the settings go in in layers:
+ *
+ *   1. the ones a job cannot do without, together: the folder, the name, the
+ *      frame range. Refused, they are tried group by group to name the culprit,
+ *      and that is an error worth stopping for;
+ *   2. the picture size, as a pair: an error for a deliverable (a "Final 4K"
+ *      at timeline size is the wrong file), dropped with a note when `lenient`
+ *      (the preview proxy);
+ *   3. everything else one key at a time; a refused key is dropped and reported,
+ *      and the job renders without it.
+ */
+const HARD_GROUPS = [['TargetDir'], ['CustomName'], ['SelectAllFrames', 'MarkIn', 'MarkOut']];
+const SIZE_KEYS = ['FormatWidth', 'FormatHeight'];
+const SETTING_HINTS = {
+  TargetDir: 'Check that the output folder exists and that Resolve can write to it.',
+  CustomName: 'The file name has a character Resolve does not accept; change the name pattern under Settings.',
+  SelectAllFrames: 'Resolve did not accept the frame range; clear the marks and set them again.',
+  MarkIn: 'The in and out frames fall outside the timeline; clear the marks and set them again.',
+  MarkOut: 'The in and out frames fall outside the timeline; clear the marks and set them again.',
+  FormatWidth: "That size is not offered for this codec. Pick a standard size for the deliverable under Settings, or leave the size empty to use the timeline's.",
+  FormatHeight: "That size is not offered for this codec. Pick a standard size for the deliverable under Settings, or leave the size empty to use the timeline's.",
+};
+
+function pick(obj, keys) {
+  const out = {};
+  for (const k of keys) if (obj[k] !== undefined) out[k] = obj[k];
+  return out;
+}
+
+/**
+ * Set `settings` on the Deliver page the layered way described above.
+ * Resolves with { applied, rejected: [{ key, value }] }; throws a ResolveError
+ * naming the key when an essential one is refused.
+ */
+async function applyRenderSettings(project, settings, { lenient = false, label = '' } = {}) {
+  const applied = {};
+  const rejected = [];
+  const trySet = async (part) => {
+    if (!Object.keys(part).length) return true;
+    const ok = await project.SetRenderSettings(part);
+    if (ok) Object.assign(applied, part);
+    return Boolean(ok);
+  };
+  const refuse = (key) =>
+    new ResolveError(`Resolve refused the render setting ${key} = ${JSON.stringify(settings[key])}${label}. ${SETTING_HINTS[key] || ''}`.trim(), { key, value: settings[key], settings });
+
+  const hard = pick(settings, HARD_GROUPS.flat());
+  if (!(await trySet(hard))) {
+    for (const group of HARD_GROUPS) {
+      const part = pick(settings, group);
+      if (Object.keys(part).length && !(await trySet(part))) throw refuse(Object.keys(part)[0]);
+    }
+  }
+  const size = pick(settings, SIZE_KEYS);
+  if (Object.keys(size).length && !(await trySet(size))) {
+    if (!lenient) throw refuse('FormatWidth');
+    for (const key of Object.keys(size)) rejected.push({ key, value: size[key] });
+  }
+  const done = new Set([...HARD_GROUPS.flat(), ...SIZE_KEYS]);
+  for (const key of Object.keys(settings)) {
+    if (done.has(key) || settings[key] === undefined) continue;
+    if (!(await trySet({ [key]: settings[key] }))) rejected.push({ key, value: settings[key] });
+  }
+  return { applied, rejected };
+}
+
 class ResolveBridge {
   constructor(resolve) {
     if (!resolve) throw new ResolveError('No Resolve scripting object was provided');
@@ -346,12 +416,10 @@ class ResolveBridge {
       // 0 = individual clips, 1 = single clip
       await project.SetCurrentRenderMode(profile.renderMode === 'individual' ? 0 : 1);
     }
-    const settings = buildRenderSettings(profile, opts);
-    const ok = await project.SetRenderSettings(settings);
-    if (!ok) {
-      throw new ResolveError(`Resolve rejected the render settings for profile "${profile.id}"`, settings);
-    }
-    return { settings, format, codec };
+    const wanted = buildRenderSettings(profile, opts);
+    const label = ` for "${profile.name || profile.id}"${format && codec ? ` (${format.id}/${codec.id})` : ''}`;
+    const { applied, rejected } = await applyRenderSettings(project, wanted, { lenient: Boolean(opts.lenient), label });
+    return { settings: applied, requested: wanted, rejected, format, codec };
   }
 
   // ------------------------------------------------------------ render queue
@@ -413,4 +481,6 @@ module.exports = {
   normKey,
   normalizeJobStatus,
   buildRenderSettings,
+  applyRenderSettings,
+  SETTING_HINTS,
 };

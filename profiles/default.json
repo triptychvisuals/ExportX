@@ -38,9 +38,8 @@
       "settings": {
         "ExportVideo": true,
         "ExportAudio": true,
-        "VideoQuality": "High",
+        "VideoQuality": 45000,
         "AudioCodec": "aac",
-        "AudioBitDepth": 16,
         "AudioSampleRate": 48000,
         "NetworkOptimization": true
       },
@@ -66,9 +65,8 @@
       "settings": {
         "ExportVideo": true,
         "ExportAudio": true,
-        "VideoQuality": "High",
+        "VideoQuality": 16000,
         "AudioCodec": "aac",
-        "AudioBitDepth": 16,
         "AudioSampleRate": 48000,
         "NetworkOptimization": true
       },
@@ -94,9 +92,8 @@
       "settings": {
         "ExportVideo": true,
         "ExportAudio": true,
-        "VideoQuality": "High",
+        "VideoQuality": 12000,
         "AudioCodec": "aac",
-        "AudioBitDepth": 16,
         "AudioSampleRate": 48000,
         "NetworkOptimization": true
       },
@@ -122,10 +119,10 @@
       "settings": {
         "ExportVideo": true,
         "ExportAudio": true,
-        "VideoQuality": "High",
+        "VideoQuality": 12000,
         "AudioCodec": "aac",
-        "AudioBitDepth": 16,
-        "AudioSampleRate": 48000
+        "AudioSampleRate": 48000,
+        "NetworkOptimization": true
       },
       "subfolder": "04_Social/9x16",
       "enabledByDefault": false,
@@ -185,9 +182,8 @@
       "settings": {
         "ExportVideo": true,
         "ExportAudio": true,
-        "VideoQuality": "Medium",
+        "VideoQuality": 6000,
         "AudioCodec": "aac",
-        "AudioBitDepth": 16,
         "AudioSampleRate": 48000,
         "NetworkOptimization": true
       },

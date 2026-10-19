@@ -68,7 +68,10 @@ const PREVIEW_PROFILE = {
   codec: 'H264',
   renderMode: 'single',
   resolution: { width: 1280, height: 720 },
-  settings: { ExportVideo: true, ExportAudio: true, VideoQuality: 'Medium', AudioCodec: 'aac', AudioBitDepth: 16, AudioSampleRate: 48000, NetworkOptimization: true },
+  // Only what every H.264/MP4 takes. Quality and audio stay on Resolve's automatic
+  // settings: a quality level or an AAC bit depth is refused by some versions, and
+  // one refused key used to fail the whole preview.
+  settings: { ExportVideo: true, ExportAudio: true },
   subfolder: '',
   fileSuffix: '',
 };
@@ -780,7 +783,9 @@ handle('exportx:preview-render', async () => {
   const width = 1280;
   const height = Math.max(2, Math.round((width * tlH) / tlW / 2) * 2);
   const profile = { ...PREVIEW_PROFILE, resolution: { width, height } };
-  await bridge.applyProfile(profile, { targetDir: PREVIEW_DIR, customName: key });
+  // lenient: a preview at the timeline's own size is still a preview
+  const applied = await bridge.applyProfile(profile, { targetDir: PREVIEW_DIR, customName: key, lenient: true });
+  if (applied.rejected.length) log(`Preview: Resolve did not take ${applied.rejected.map((r) => r.key).join(', ')} for mp4/H264; rendering without`);
   const jobId = await bridge.addRenderJob();
   const ok = await bridge.startRendering([jobId]);
   if (!ok) throw new Error('Resolve refused to start the preview render');
@@ -859,7 +864,7 @@ handle('exportx:queue', async (req) => {
   const project = await state.bridge.projectName();
   const info = await currentInfo(true);
   const queuedAt = Date.now();
-  const { jobs, errors, notes } = await exporter.queue(request);
+  const { jobs, errors, notes, warnings } = await exporter.queue(request);
   state.jobs = jobs;
   const portal = portalConfig();
   const upload = req && typeof req.upload === 'boolean' ? req.upload : portal.auto;
@@ -890,7 +895,7 @@ handle('exportx:queue', async (req) => {
     await startRender(jobs.map((j) => j.jobId));
     rendering = true;
   }
-  return { jobs, errors, notes, rendering };
+  return { jobs, errors, notes, warnings, rendering };
 });
 
 handle('exportx:render', async (jobIds) => {

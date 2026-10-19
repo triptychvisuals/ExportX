@@ -202,7 +202,8 @@ class MockProject {
   SetRenderSettings(settings) {
     this._record('SetRenderSettings', [settings]);
     if (this.rejectSettings && this.rejectSettings(settings)) return false;
-    this.currentSettings = { ...settings };
+    // Resolve keeps the keys a call leaves out; partial dictionaries are the normal way to use it.
+    this.currentSettings = { ...this.currentSettings, ...settings };
     return true;
   }
 

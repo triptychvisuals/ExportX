@@ -83,9 +83,9 @@ These are the keys `Project.SetRenderSettings()` accepts (from Blackmagic's scri
 | `FormatWidth`, `FormatHeight` | int | Set from `resolution`. |
 | `FrameRate` | number | Set from `frameRate`. |
 | `PixelAspectRatio` | string | `"square"` or `"cinemascope"`. |
-| `VideoQuality` | int or string | `0` automatic; `1…` bitrate in kb/s; or `"Least"`, `"Low"`, `"Medium"`, `"High"`, `"Best"` where the codec supports quality levels. |
+| `VideoQuality` | int or string | `0` automatic; `1…` bit rate in kb/s (what H.264 and H.265 take: the bundled profiles use 45000 for the 4K final, 16000 for 1080p, 12000 for social cuts, 6000 for the proxy); or `"Least"`, `"Low"`, `"Medium"`, `"High"`, `"Best"` for the few codecs with quality levels (Photo JPEG and the like). A level on H.264/H.265 is refused by Resolve and dropped with a note. |
 | `AudioCodec` | string | e.g. `"aac"`, `"lpcm"`. |
-| `AudioBitDepth` | int | 16 / 24 / 32 |
+| `AudioBitDepth` | int | 16 / 24 / 32, for Linear PCM (`lpcm`). AAC has no bit depth; Resolve refuses the key and ExportX drops it. |
 | `AudioSampleRate` | int | 48000 |
 | `ColorSpaceTag`, `GammaTag` | string | e.g. `"Same as Project"`, `"Rec.709"`, `"Rec.2100 ST2084"`. |
 | `ExportAlpha` | bool | Codec permitting. |
@@ -93,6 +93,10 @@ These are the keys `Project.SetRenderSettings()` accepts (from Blackmagic's scri
 | `MultiPassEncode` | bool | H.264 / H.265. |
 | `AlphaMode` | int | `0` premultiplied, `1` straight. |
 | `NetworkOptimization` | bool | Fast-start MP4/MOV. |
+
+### When Resolve refuses a setting
+
+`SetRenderSettings` takes the whole dictionary or none of it, and refuses any key the current format and codec do not offer. ExportX therefore sets the essentials first (folder, name, frame range), then the size as a pair, then every other key on its own. A refused extra is dropped: the job renders with Resolve's default for it, the log says `Resolve does not offer VideoQuality = "High" for mp4/H264; "Web 1080p" renders without`, and the same line shows as a banner when the batch is queued. A refused folder, name, range or size stops that job with a message that names the key and what to change.
 
 ## File names
 

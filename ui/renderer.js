@@ -569,9 +569,18 @@
       fillCodecSelect(f('codec'), f('format').value, p.codec);
       f('format').addEventListener('change', () => fillCodecSelect(f('codec'), f('format').value, 'auto'));
     }
+    const levelNote = () => {
+      const level = QUALITIES.includes(f('quality').value);
+      const h26x = /^h\.?26[45]$/i.test(String(f('codec').value || '').trim());
+      if (level && h26x) say('H.264 and H.265 take a bit rate (choose "Bit rate…", in kb/s; 16000 suits 1080p, 45000 suits 4K). Resolve refuses the Least to Best levels for them, so this one would be dropped and the file would use Resolve\'s automatic quality.', true);
+      else if (note.textContent.startsWith('H.264 and H.265 take a bit rate')) say('');
+    };
     f('quality').addEventListener('change', () => {
       f('bitrate').hidden = f('quality').value !== 'custom';
+      levelNote();
     });
+    f('codec').addEventListener('change', levelNote);
+    levelNote();
     f('target').addEventListener('change', () => {
       const stills = f('target').value === 'stills';
       f('audio').closest('.switch').style.display = stills ? 'none' : '';
@@ -1310,7 +1319,7 @@
     showBanner(null);
     setBusy(true);
     try {
-      const { jobs, errors, notes, rendering } = await api.queue(req);
+      const { jobs, errors, notes, warnings, rendering } = await api.queue(req);
       state.jobs = jobs;
       state.statuses = new Map();
       state.rendering = rendering;
@@ -1323,6 +1332,8 @@
         showBanner(`${errors.length} file(s) could not be queued: ${errors.map((e) => `${e.profileName} (${e.message})`).join('; ')}`);
       } else if (!jobs.length) {
         showBanner(notes.length ? notes.map((n) => n.message).join(' · ') : 'Nothing was queued.', 'info');
+      } else if (warnings && warnings.length) {
+        showBanner(`${warnings.map((w) => w.message).filter((v, i, a) => a.indexOf(v) === i).join(' · ')}. Everything else is queued as set.`, 'info');
       }
       if (jobs.length) el.progress.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     } catch (err) {

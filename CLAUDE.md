@@ -40,6 +40,7 @@ After any UI change run `node scripts/screenshot.js` and look at the PNGs (it ca
 - `WorkflowIntegration.node` is Blackmagic's binary, git-ignored, copied by `scripts/install.*` from `<Resolve>/Developer/Workflow Integrations/Examples/SamplePlugin/`. Never commit it.
 - The plugin id `com.triptychvisuals.exportx` must match in `manifest.xml` and `main.js`.
 - Resolve render settings are global Deliver-page state: apply a profile then immediately `AddRenderJob`, one item at a time. Multi-timeline batching switches timelines and must switch back (`finally`).
+- `SetRenderSettings` takes all keys or none, and refuses keys the current format/codec does not offer (`VideoQuality: 'Medium'` for H.264, `AudioBitDepth` for AAC). `applyRenderSettings` in `src/resolve.js` (mirrored in Python) therefore sets the essentials together, the size as a pair, and every extra alone, dropping refused extras into `rejected` (shown as a banner and in the log). Keep new profile settings in the "extras" class unless a wrong job is worse than no job.
 - Frame spaces: `MarkIn/MarkOut` and `GetStartFrame()` are absolute; marker frameIds are relative to the timeline start. Convert in one place (`src/marks.js`, `ResolveBridge.timelineInfo`).
 - Resolve API reference: `docs/RESOLVE_API.md`, and the authoritative `Developer/Scripting/README.txt` in the user's Resolve install. We cannot run Resolve in CI; test logic against the mock.
 - In cloud sessions, parallel Bash calls share one working directory: use absolute paths in heredocs and scripts.
